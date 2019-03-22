@@ -2,6 +2,11 @@ open Stdune
 open Dune_file
 
 module T = struct
+  type is_component_of_a_group_but_not_the_root = {
+    depth : int;
+    stanzas : Stanza.t list Dir_with_dune.t option;
+  }
+
   type t =
     | Standalone of
         (File_tree.Dir.t * Stanza.t list Dir_with_dune.t option) option
@@ -13,17 +18,22 @@ module T = struct
                     * Stanza.t list Dir_with_dune.t
     (* Directory with [(include_subdirs x)] where [x] is not [no] *)
 
-    | Is_component_of_a_group_but_not_the_root of
-        Stanza.t list Dir_with_dune.t option
+    | Is_component_of_a_group_but_not_the_root of is_component_of_a_group_but_not_the_root
     (* Sub-directory of a [Group_root _] *)
 
   let to_sexp _ = Sexp.Atom "<dir-status is opaque>"
 end
 include T
 
+type where_in_group =
+  | Not_in_group
+  | In_group of int (* depth *)
+
 let is_standalone = function
-  | Standalone _ -> true
-  | _ -> false
+  | Standalone _ -> Not_in_group
+  | Group_root _ -> In_group 0
+  | Is_component_of_a_group_but_not_the_root { depth; _ } ->
+    In_group depth
 
 let get_include_subdirs stanzas =
   List.fold_left stanzas ~init:None ~f:(fun acc stanza ->
@@ -67,10 +77,12 @@ module DB = struct
         match Path.parent dir with
         | None -> Standalone None
         | Some dir ->
-          if is_standalone (get ~dir) then
+          match is_standalone (get ~dir) with
+          | Not_in_group ->
             Standalone None
-          else
-            Is_component_of_a_group_but_not_the_root None
+          | In_group depth ->
+            Is_component_of_a_group_but_not_the_root
+              { stanzas = None; depth = depth + 1 }
       end
     | Some ft_dir ->
       let project_root =
@@ -79,11 +91,15 @@ module DB = struct
         |> Path.of_local in
       match stanzas_in db ~dir with
       | None ->
-        if Path.equal dir project_root ||
-           is_standalone (get ~dir:(Path.parent_exn dir)) then
+        if Path.equal dir project_root  then
           Standalone (Some (ft_dir, None))
         else
-          Is_component_of_a_group_but_not_the_root None
+          (match is_standalone (get ~dir:(Path.parent_exn dir)) with
+           | Not_in_group ->
+             Standalone (Some (ft_dir, None))
+           | In_group depth ->
+             Is_component_of_a_group_but_not_the_root
+               { stanzas = None; depth = depth + 1 })
       | Some d ->
         match get_include_subdirs d.data with
         | Some Unqualified ->
@@ -91,11 +107,16 @@ module DB = struct
         | Some No ->
           Standalone (Some (ft_dir, Some d))
         | None ->
-          if dir <> project_root &&
-             not (is_standalone (get ~dir:(Path.parent_exn dir)))
+          if dir <> project_root
           then begin
-            check_no_module_consumer d.data;
-            Is_component_of_a_group_but_not_the_root (Some d)
+            match (is_standalone (get ~dir:(Path.parent_exn dir))) with
+            | In_group depth ->
+              (
+                check_no_module_consumer d.data;
+                Is_component_of_a_group_but_not_the_root
+                  { stanzas = (Some d); depth = depth + 1 })
+            | Not_in_group ->
+              Standalone (Some (ft_dir, Some d))
           end else
             Standalone (Some (ft_dir, Some d))
 
