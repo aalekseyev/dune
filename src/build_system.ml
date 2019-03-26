@@ -309,10 +309,42 @@ module Alias0 = struct
       ~dir:context.build_dir
 end
 
+(* The purpose of this module is to detect incorrect use of
+   the thunks that add rules to a rule collector.
+   Once we migrate to the world where the rules collection is done
+   with implicit outputs only, we should get rid of this module (probably along
+   with the rules collector). *)
+module Thunk_with_backtrace = struct
+  type t = {
+    thunk : unit -> unit;
+    ran : unit option ref;
+  }
+
+  let run t =
+    match !(t.ran) with
+    | Some _last_run ->
+      (* CR-someday aalekseyev: this should probably be disallowed. *)
+      ()
+    | None ->
+      t.ran := Some ();
+      match Exn_with_backtrace.try_with t.thunk with
+      | Error exn ->
+        Exn.code_error "thunk raised"
+          [ "exn", Exn_with_backtrace.to_sexp exn
+          ]
+      | Ok ok ->
+        ok
+
+  let create thunk =
+    { thunk; ran = ref None }
+end
+
 module Dir_status = struct
+
   type collection_stage =
-    | Loading
     | Pending
+    | Loading
+    | Frozen
 
   type alias_action =
     { stamp  : Digest.t
@@ -323,21 +355,184 @@ module Dir_status = struct
     ; loc : Loc.t option
     }
 
+  module Alias : sig
+    type t
 
-  type alias =
-    { mutable deps     : Path.Set.t
-    ; mutable dyn_deps : (unit, Path.Set.t) Build.t
-    ; mutable actions  : alias_action list
-    }
+    val create : unit -> t
 
-  type rules_collector =
-    { mutable rules   : Build_interpret.Rule.t list
-    ; mutable aliases : alias String.Map.t
-    ; mutable stage   : collection_stage
-    }
+    type immutable =
+      { deps     : Path.Set.t
+      ; dyn_deps : (unit, Path.Set.t) Build.t
+      ; actions  : alias_action list
+      }
+
+    val freeze : t -> immutable
+    val assert_frozen : t -> immutable
+
+    val add_deps : t -> Path.Set.t -> unit
+    val add_dyn_deps : t -> (unit, Path.Set.t) Build.t -> unit
+    val add_action : t -> alias_action -> unit
+  end = struct
+    type t =
+      { mutable deps     : Path.Set.t
+      ; mutable dyn_deps : (unit, Path.Set.t) Build.t
+      ; mutable actions  : alias_action list
+      ; mutable frozen : bool
+      }
+
+    let create () =
+      { deps     = Path.Set.empty
+      ; dyn_deps = Build.return Path.Set.empty
+      ; actions  = []
+      ; frozen = false
+      }
+
+    type immutable =
+      { deps     : Path.Set.t
+      ; dyn_deps : (unit, Path.Set.t) Build.t
+      ; actions  : alias_action list
+      }
+
+    let _of_immutable { deps; dyn_deps; actions } =
+      { deps; dyn_deps; actions; frozen = true }
+
+    let to_immutable { deps; dyn_deps; actions; frozen } =
+      assert frozen;
+      { deps; dyn_deps; actions }
+
+    let freeze t =
+      if t.frozen
+      then Exn.code_error "Alias.freeze called twice" []
+      else (t.frozen <- true; to_immutable t)
+
+    let assert_frozen t =
+      assert t.frozen;
+      to_immutable t
+
+    let add_deps (t : t) deps =
+      assert (not t.frozen);
+      t.deps <- Path.Set.union t.deps deps
+
+    let add_dyn_deps (t : t) deps =
+      assert (not t.frozen);
+      t.dyn_deps <-
+        (let open Build.O in
+         Build.fanout t.dyn_deps deps >>^ fun (a, b) ->
+         Path.Set.union a b)
+
+    let add_action (t : t) action =
+      assert (not t.frozen);
+      t.actions <- action :: t.actions
+
+  end
+
+  module Rules_collector : sig
+    type t
+    type frozen
+
+    (** state transition diagram:
+        pending -> loading -> frozen *)
+
+    val create_pending : info:Sexp.t -> unit -> t
+    val start_loading :
+      t ->
+      (unit, [`Already_loading]) Result.t
+    val freeze : t -> frozen
+
+    val rules : frozen -> Build_interpret.Rule.t list
+    val aliases : frozen -> Alias.immutable String.Map.t
+
+    val forbid_freeze_until_thunk_is_forced :
+      t -> Thunk_with_backtrace.t -> unit
+
+    val add_rule : t -> Build_interpret.Rule.t -> unit
+    val modify_alias : t -> string -> f:(Alias.t -> unit) -> unit
+  end = struct
+
+    type t =
+      { mutable rules   : Build_interpret.Rule.t list
+      ; mutable aliases : Alias.t String.Map.t
+      ; mutable stage   : collection_stage
+      ; mutable thunks : Thunk_with_backtrace.t list
+      ; info : Sexp.t
+      }
+    type frozen = t
+
+    let create_pending ~info () =
+      { rules   = []
+      ; aliases = String.Map.empty
+      ; stage   = Pending
+      ; thunks = []
+      ; info
+      }
+
+    let rules t = t.rules
+    let aliases t = String.Map.map t.aliases ~f:Alias.assert_frozen
+
+    let assert_not_frozen t why = match t.stage with
+      | Frozen ->
+        Exn.code_error (sprintf "%s called on a frozen Rules_collector" why) []
+      | Pending ->
+        ()
+      | Loading ->
+        ()
+
+    let forbid_freeze_until_thunk_is_forced t (thunk : Thunk_with_backtrace.t) =
+      assert_not_frozen t "forbid_freeze";
+      assert (Option.is_none !(thunk.ran));
+      t.thunks <- thunk :: t.thunks
+
+    let add_rule t rule =
+      assert_not_frozen t "add_rule";
+      t.rules <- rule :: t.rules
+
+    let modify_alias t name ~f =
+      assert_not_frozen t "modify_alias";
+      let def =
+        match String.Map.find t.aliases name with
+        | None ->
+          let alias = Alias.create () in
+          t.aliases <- String.Map.add t.aliases name alias;
+          alias
+        | Some x -> x
+      in
+      f def
+
+    let start_loading t = match t.stage with
+      | Frozen ->
+        Exn.code_error "start_loading called on a frozen Rules_collector" []
+      | Loading -> Error `Already_loading
+      | Pending ->
+        t.stage <- Loading;
+        (Ok ())
+
+    let freeze t =
+      match t.stage with
+      | Frozen ->
+        Exn.code_error "Rules_collector.freeze called twice" []
+      | Loading ->
+        List.iter t.thunks ~f:(fun (b : Thunk_with_backtrace.t) ->
+          if Option.is_none !(b.ran) then
+            Exn.code_error
+              "tried to freeze with some pending modifications"
+              ["pending-modifications",
+               (* CR-someday aalekseyev: include information on where the thunk was
+                  constructed. This information is a bit too expensive to capture
+                  unconditionally though. *)
+               Atom ""
+              ; "info", t.info
+              ]
+        );
+        t.stage <- Frozen;
+        (String.Map.iter t.aliases ~f:(fun x -> ignore (Alias.freeze x));
+         t)
+      | Pending ->
+        Exn.code_error "Rules_collector.freeze called while still Pending" []
+
+  end
 
   type t =
-    | Collecting_rules of rules_collector
+    | Collecting_rules of Rules_collector.t
     | Loaded  of Path.Set.t (* set of targets in the directory *)
     | Forward of Path.t (* Load this directory first       *)
     | Failed_to_load
@@ -487,10 +682,7 @@ let get_dir_status t ~dir =
         Dir_status.Loaded Path.Set.empty
       else
         Collecting_rules
-          { rules   = []
-          ; aliases = String.Map.empty
-          ; stage   = Pending
-          }
+          (Dir_status.Rules_collector.create_pending ~info:(Path.to_sexp dir) ())
     end)
 
 module Target = Build_interpret.Target
@@ -498,13 +690,13 @@ module Pre_rule = Build_interpret.Rule
 
 let get_file : type a. t -> Path.t -> a File_kind.t -> a File_spec.t =
   fun t fn kind ->
-  match Path.Table.find t.files fn with
-  | None ->
-    let loc = Rule_fn.loc () in
-    Errors.fail_opt loc "no rule found for %s" (Path.to_string fn)
-  | Some (File_spec.T file) ->
-    let Type_eq.T = File_kind.eq_exn kind file.kind in
-    file
+    match Path.Table.find t.files fn with
+    | None ->
+      let loc = Rule_fn.loc () in
+      Errors.fail_opt loc "no rule found for %s" (Path.to_string fn)
+    | Some (File_spec.T file) ->
+      let Type_eq.T = File_kind.eq_exn kind file.kind in
+      file
 
 let vfile_to_string (type a) (module K : Vfile_kind.S with type t = a) _fn x =
   K.to_string x
@@ -542,7 +734,7 @@ module Build_exec = struct
         let a = exec dyn_deps a x in
         let b = exec dyn_deps b x in
         (a, b)
-      | Paths _ -> x
+      | Deps _ -> x
       | Paths_for_rule _ -> x
       | Paths_glob (dir, pred) -> eval_pred ~dir pred
       | Contents p -> Io.read_file p
@@ -570,8 +762,6 @@ module Build_exec = struct
         end
       | Lazy_no_targets t ->
         exec dyn_deps (Lazy.force t) x
-      | Env_var _ ->
-        x
       | Memo m ->
         begin match m.state with
         | Evaluated (x, deps) ->
@@ -591,7 +781,6 @@ module Build_exec = struct
             m.state <- Unevaluated;
             reraise exn
         end
-      | Universe -> x
     in
     let dyn_deps = ref Dep.Set.empty in
     let result = exec dyn_deps (Build.repr t) x in
@@ -753,6 +942,23 @@ let no_rule_found =
           ctx
           (hint ctx (String.Map.keys t.contexts))
 
+type rule_collection_implicit_output = Thunk_with_backtrace.t Appendable_list.t
+let rule_collection_implicit_output =
+  Memo.Implicit_output.add (module struct
+    type t = rule_collection_implicit_output
+
+    let union x y = Appendable_list.(@) x y
+    let name = "rule collection"
+  end)
+
+let handle_add_rule_effects f =
+  let res, effects =
+    Memo.Implicit_output.collect_sync rule_collection_implicit_output f
+  in
+  Option.iter effects ~f:(fun l ->
+    List.iter (Appendable_list.to_list l) ~f:(Thunk_with_backtrace.run));
+  res
+
 let rec compile_rule t ?(copy_source=false) pre_rule =
   let { Pre_rule.
         context
@@ -829,16 +1035,15 @@ and load_dir_and_get_targets t ~dir =
 
   | Collecting_rules collector ->
     let () =
-      match collector.stage with
-      | Loading ->
+      match Dir_status.Rules_collector.start_loading collector with
+      | Error `Already_loading ->
         die "recursive dependency between directories:\n    %s"
           (String.concat ~sep:"\n--> "
              (List.map t.load_dir_stack ~f:Utils.describe_target))
-      | Pending ->
-        collector.stage <- Loading;
+      | Ok () ->
+        ()
     in
 
-    collector.stage <- Loading;
     t.load_dir_stack <- dir :: t.load_dir_stack;
 
     try
@@ -863,19 +1068,23 @@ and load_dir_step2_exn t ~dir ~collector =
     if context_name = "install" then
       These String.Set.empty
     else
-      let gen_rules =
-        String.Map.find_exn (Fdecl.get t.gen_rules) context_name in
-      gen_rules ~dir (Path.explode_exn sub_dir)
+      let gen_rules = String.Map.find_exn (Fdecl.get t.gen_rules) context_name in
+      handle_add_rule_effects
+        (fun () ->
+           gen_rules ~dir (Path.explode_exn sub_dir))
   in
-  let rules = collector.rules in
+  let collector = Dir_status.Rules_collector.freeze collector in
+  let rules = Dir_status.Rules_collector.rules collector in
 
   (* Compute alias rules *)
   let alias_dir = Path.append (Path.relative alias_dir context_name) sub_dir in
   let alias_rules, alias_stamp_files =
     let open Build.O in
-    let aliases = collector.aliases in
     let aliases =
-      if String.Map.mem collector.aliases "default" then
+      Dir_status.Rules_collector.aliases collector
+    in
+    let aliases =
+      if String.Map.mem aliases "default" then
         aliases
       else
         match Path.extract_build_context_dir dir with
@@ -885,16 +1094,16 @@ and load_dir_step2_exn t ~dir ~collector =
           | None -> aliases
           | Some dir ->
             String.Map.add aliases "default"
-              { deps = Path.Set.empty
+              ({ deps = Path.Set.empty
               ; dyn_deps =
                   (Alias0.dep_rec_internal ~name:"install" ~dir ~ctx_dir
                    >>^ fun (_ : bool) ->
                    Path.Set.empty)
               ; actions = []
-              }
+              } : Dir_status.Alias.immutable)
     in
     String.Map.foldi aliases ~init:([], Path.Set.empty)
-      ~f:(fun name { Dir_status. deps; dyn_deps; actions } (rules, alias_stamp_files) ->
+      ~f:(fun name { Dir_status.Alias.deps; dyn_deps; actions } (rules, alias_stamp_files) ->
         let base_path = Path.relative alias_dir name in
         let rules, deps =
           List.fold_left actions ~init:(rules, deps)
@@ -1519,8 +1728,7 @@ let rec add_build_dir_to_keep t ~dir =
 let get_collector t ~dir =
   match get_dir_status t ~dir with
   | Collecting_rules collector ->
-    if collector.rules = [] && String.Map.is_empty collector.aliases then
-      add_build_dir_to_keep t ~dir;
+    add_build_dir_to_keep t ~dir;
     collector
   | Failed_to_load -> raise Already_reported
   | Loaded _ | Forward _ ->
@@ -1537,6 +1745,12 @@ let get_collector t ~dir =
       ; "load_dir_stack", Sexp.Encoder.list Path.to_sexp t.load_dir_stack
       ]
 
+let produce_rule_collection collector f =
+  let thunk = Thunk_with_backtrace.create f in
+  Dir_status.Rules_collector.forbid_freeze_until_thunk_is_forced collector thunk;
+  Memo.Implicit_output.produce rule_collection_implicit_output (
+    Appendable_list.singleton thunk)
+
 let add_rule (rule : Build_interpret.Rule.t) =
   let t = t () in
   let rule =
@@ -1544,7 +1758,7 @@ let add_rule (rule : Build_interpret.Rule.t) =
     | None -> rule
     | Some prefix -> { rule with build = Build.O.(>>>) prefix rule.build } in
   let collector = get_collector t ~dir:rule.dir in
-  collector.rules <- rule :: collector.rules
+  produce_rule_collection collector (fun () -> Dir_status.Rules_collector.add_rule collector rule)
 
 let prefix_rules' t prefix ~f =
   let old_prefix = t.prefix in
@@ -1576,43 +1790,31 @@ let () =
 module Alias = struct
   include Alias0
 
-  let get_alias_def build_system t =
+  let modify_alias build_system t ~f =
     let collector = get_collector build_system ~dir:t.dir in
-    match String.Map.find collector.aliases t.name with
-    | None ->
-      let x =
-        { Dir_status.
-          deps     = Path.Set.empty
-        ; dyn_deps = Build.return Path.Set.empty
-        ; actions  = []
-        }
-      in
-      collector.aliases <- String.Map.add collector.aliases t.name x;
-      x
-    | Some x -> x
+    produce_rule_collection collector (fun () ->
+      Dir_status.Rules_collector.modify_alias ~f collector t.name)
 
   let add_deps t ?dyn_deps deps =
     let build_system = get_build_system () in
-    let def = get_alias_def build_system t in
-    def.deps <- Path.Set.union def.deps deps;
-    match dyn_deps with
-    | None -> ()
-    | Some build ->
-      let open Build.O in
-      def.dyn_deps <-
-        Build.fanout def.dyn_deps build >>^ fun (a, b) ->
-        Path.Set.union a b
+    modify_alias build_system t ~f:(fun def ->
+      Dir_status.Alias.add_deps def deps;
+      match dyn_deps with
+      | None -> ()
+      | Some build ->
+        Dir_status.Alias.add_dyn_deps def build)
 
   let add_action t ~context ~env ~loc ?(locks=[]) ~stamp action =
     let build_system = get_build_system () in
-    let def = get_alias_def build_system t in
-    def.actions <- { stamp = Digest.string (Marshal.to_string stamp [])
-                   ; action
-                   ; locks
-                   ; context
-                   ; loc
-                   ; env
-                   } :: def.actions
+    modify_alias build_system t ~f:(fun def ->
+      Dir_status.Alias.add_action def
+        { stamp = Digest.string (Marshal.to_string stamp [])
+        ; action
+        ; locks
+        ; context
+        ; loc
+        ; env
+        })
 end
 
 let targets_of ~dir = targets_of (t ()) ~dir

@@ -37,11 +37,19 @@ val mlds : t -> Dune_file.Documentation.t -> Path.t list
 (** Coq modules of library [name] is the Coq library name.  *)
 val coq_modules_of_library : t -> name:string -> Coq_module.t list
 
-val get : Super_context.t -> dir:Path.t -> t
+type get_result =
+  | Standalone_or_root of t
+  | Group_part of Path.t
+
+(** Produces rules for all group parts when it returns [Standalone_or_root].
+    Does not generate any rules when it returns [Group_part]. *)
+val get : Super_context.t -> dir:Path.t -> get_result
+
+val get_without_rules : Super_context.t -> dir:Path.t -> t
 
 type kind = private
   | Standalone
-  | Group_root of t list Lazy.t (** Sub-directories part of the group *)
+  | Group_root of (unit -> t list) (** Sub-directories part of the group *)
   | Group_part of t
 
 val kind : t -> kind

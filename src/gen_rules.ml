@@ -245,16 +245,20 @@ module Gen(P : sig val sctx : Super_context.t end) = struct
          | Some _ ->
            (* This interprets "rule" and "copy_files" stanzas. *)
            let dir_contents = Dir_contents.get sctx ~dir in
-           match Dir_contents.kind dir_contents with
-           | Standalone ->
-             ignore (gen_rules dir_contents [] ~dir : _ list)
+           match dir_contents with
            | Group_part root ->
-             Build_system.load_dir ~dir:(Dir_contents.dir root)
-           | Group_root (lazy subs) ->
-             let cctxs = gen_rules dir_contents [] ~dir in
-             List.iter subs ~f:(fun dc ->
-               ignore (gen_rules dir_contents cctxs ~dir:(Dir_contents.dir dc)
-                       : _ list))
+             Build_system.load_dir ~dir:root
+           | Standalone_or_root dir_contents ->
+             match Dir_contents.kind dir_contents with
+             | Group_part _ -> assert false
+             | Standalone ->
+               ignore (gen_rules dir_contents [] ~dir : _ list)
+             | Group_root subs ->
+               let cctxs = gen_rules dir_contents [] ~dir in
+               let subs = subs () in
+               List.iter subs ~f:(fun dc ->
+                 ignore (gen_rules dir_contents cctxs ~dir:(Dir_contents.dir dc)
+                         : _ list))
        end);
     match components with
     | [] -> These (String.Set.of_list [".js"; "_doc"; ".ppx"])
@@ -263,7 +267,8 @@ module Gen(P : sig val sctx : Super_context.t end) = struct
 
   let init () =
     Install_rules.init sctx;
-    Odoc.init sctx
+    Build_system.handle_add_rule_effects (fun () ->
+      Odoc.init sctx)
 end
 
 module type Gen = sig
@@ -337,3 +342,4 @@ let gen ~contexts
     (String.Map.map map ~f:(fun (module M : Gen) -> M.gen_rules));
   String.Map.iter map ~f:(fun (module M : Gen) -> M.init ());
   String.Map.map map ~f:(fun (module M : Gen) -> M.sctx)
+

@@ -31,7 +31,7 @@ let gen_dune_package sctx ~version ~(pkg : Local_package.t) =
             |> List.map ~f:(fun lib ->
               let name = Lib.name lib in
               let dir_contents =
-                Dir_contents.get sctx ~dir:(Lib.src_dir lib) in
+                Dir_contents.get_without_rules sctx ~dir:(Lib.src_dir lib) in
               let lib_modules =
                 Dir_contents.modules_of_library dir_contents ~name in
               let foreign_objects =
@@ -380,7 +380,7 @@ let init_install sctx (package : Local_package.t) entries =
                  ; dune_version = _
                  } ->
               let sub_dir = (Option.value_exn lib.public).sub_dir in
-              let dir_contents = Dir_contents.get sctx ~dir in
+              let dir_contents = Dir_contents.get_without_rules sctx ~dir in
               lib_install_files sctx ~dir ~sub_dir lib ~scope
                 ~dir_kind ~dir_contents)
   in
@@ -408,10 +408,13 @@ let init sctx =
   let packages = Local_package.of_sctx sctx in
   let ctx = Super_context.context sctx in
   let artifacts_per_package =
-    Package.Name.Map.map packages ~f:(init_binary_artifacts sctx) in
-  Package.Name.Map.iter packages ~f:(fun pkg ->
-    Local_package.name pkg
-    |> Package.Name.Map.find artifacts_per_package
-    |> Option.value_exn
-    |> init_install sctx pkg;
-    init_install_files ctx pkg)
+    Build_system.handle_add_rule_effects (fun () ->
+      Package.Name.Map.map packages ~f:(init_binary_artifacts sctx))
+  in
+  Build_system.handle_add_rule_effects (fun () ->
+    Package.Name.Map.iter packages ~f:(fun pkg ->
+      Local_package.name pkg
+      |> Package.Name.Map.find artifacts_per_package
+      |> Option.value_exn
+      |> init_install sctx pkg;
+      init_install_files ctx pkg))

@@ -41,6 +41,7 @@ let external_lib_deps_mode t = t.external_lib_deps_mode
 
 let equal = ((==) : t -> t -> bool)
 let hash t = Context.hash t.context
+let to_dyn t = Context.to_dyn t.context
 let to_sexp t = Context.to_sexp t.context
 
 let host t = Option.value t.host ~default:t
@@ -487,7 +488,7 @@ module Deps = struct
       Alias.dep (Alias.package_install ~context:t.context ~pkg)
       >>^ fun () -> []
     | Universe ->
-      Build.universe
+      Build.dep Dep.universe
       >>^ fun () -> []
     | Env_var var_sw ->
       let var = Expander.expand_str expander var_sw in

@@ -177,15 +177,15 @@ type t =
   { kind : kind
   ; dir : Path.t
   ; text_files : String.Set.t
-  ; modules : Modules.t Lazy.t
-  ; c_sources : C_sources.t Lazy.t
-  ; mlds : (Dune_file.Documentation.t * Path.t list) list Lazy.t
-  ; coq_modules : Coq_module.t list String.Map.t Lazy.t
+  ; modules : unit -> Modules.t
+  ; c_sources : unit -> C_sources.t
+  ; mlds : unit -> (Dune_file.Documentation.t * Path.t list) list
+  ; coq_modules : unit -> Coq_module.t list String.Map.t
   }
 
 and kind =
   | Standalone
-  | Group_root of t list Lazy.t
+  | Group_root of (unit -> t list)
   | Group_part of t
 
 let kind t = t.kind
@@ -194,14 +194,14 @@ let dir t = t.dir
 let dirs t =
   match t.kind with
   | Standalone -> [t]
-  | Group_root (lazy l)
-  | Group_part { kind = Group_root (lazy l); _ } -> t :: l
+  | Group_root l
+  | Group_part { kind = Group_root l; _ } -> t :: l ()
   | Group_part { kind = _; _ } -> assert false
 
 let text_files t = t.text_files
 
 let modules_of_library t ~name =
-  let map = (Lazy.force t.modules).libraries in
+  let map = (t.modules ()).libraries in
   match Lib_name.Map.find map name with
   | Some m -> m
   | None ->
@@ -211,7 +211,7 @@ let modules_of_library t ~name =
       ]
 
 let modules_of_executables t ~first_exe =
-  let map = (Lazy.force t.modules).executables in
+  let map = (t.modules ()).executables in
   match String.Map.find map first_exe with
   | Some m -> m
   | None ->
@@ -221,13 +221,13 @@ let modules_of_executables t ~first_exe =
       ]
 
 let c_sources_of_library t ~name =
-  C_sources.for_lib (Lazy.force t.c_sources) ~dir:t.dir ~name
+  C_sources.for_lib (t.c_sources ()) ~dir:t.dir ~name
 
 let lookup_module t name =
-  Module.Name.Map.find (Lazy.force t.modules).rev_map name
+  Module.Name.Map.find (t.modules ()).rev_map name
 
 let mlds t (doc : Documentation.t) =
-  let map = Lazy.force t.mlds in
+  let map = t.mlds () in
   match
     List.find_map map ~f:(fun (doc', x) ->
       Option.some_if (Loc.equal doc.loc doc'.loc) x)
@@ -241,7 +241,7 @@ let mlds t (doc : Documentation.t) =
       ]
 
 let coq_modules_of_library t ~name =
-  let map = Lazy.force t.coq_modules in
+  let map = t.coq_modules () in
   match String.Map.find map name with
   | Some x -> x
   | None ->
@@ -329,16 +329,16 @@ let modules_of_files ~dir ~files =
 
 let build_mlds_map (d : _ Dir_with_dune.t) ~files =
   let dir = d.ctx_dir in
-  let mlds = lazy (
-    String.Set.fold files ~init:String.Map.empty ~f:(fun fn acc ->
-      match String.lsplit2 fn ~on:'.' with
-      | Some (s, "mld") -> String.Map.add acc s fn
-      | _ -> acc))
+  let mlds = Memo.lazy_ (fun () -> (
+      String.Set.fold files ~init:String.Map.empty ~f:(fun fn acc ->
+        match String.lsplit2 fn ~on:'.' with
+        | Some (s, "mld") -> String.Map.add acc s fn
+        | _ -> acc)))
   in
   List.filter_map d.data ~f:(function
     | Documentation doc ->
       let mlds =
-        let mlds = Lazy.force mlds in
+        let mlds = mlds () in
         Ordered_set_lang.String.eval_unordered doc.mld_files
           ~parse:(fun ~loc s ->
             match String.Map.find mlds s with
@@ -366,6 +366,13 @@ let coq_modules_of_files ~subdirs =
   let modules = List.concat_map ~f:build_mod_dir subdirs in
   modules
 
+type result0_here = {
+  t : t;
+  (* [rules] includes rules for subdirectories too *)
+  rules : Build_system.rule_collection_implicit_output option;
+  subdirs : t Path.Map.t;
+}
+
 (* TODO: Build reverse map and check duplicates, however, are duplicates harmful?
  * In Coq all libs are "wrapped" so including a module twice is not so bad.
  *)
@@ -377,155 +384,241 @@ let build_coq_modules_map (d : _ Dir_with_dune.t) ~dir ~modules =
       String.Map.add map (snd coq.name) modules
     | _ -> map)
 
-let cache = Hashtbl.create 32
+type result0 =
+  | See_above of int
+  | Here of result0_here
 
-let clear_cache () =
-  Hashtbl.reset cache
+let get_without_rules_fdecl : (Super_context.t * Path.t -> t) Fdecl.t =
+  Fdecl.create ()
 
-let () = Hooks.End_of_build.always clear_cache
+module Key = struct
+  type t = Super_context.t * Path.t
 
-let rec get sctx ~dir =
-  match Hashtbl.find cache dir with
-  | Some t -> t
-  | None ->
-    let dir_status_db = Super_context.dir_status_db sctx in
-    match Dir_status.DB.get dir_status_db ~dir with
-    | Standalone x ->
-      let t =
-        match x with
-        | Some (ft_dir, Some d) ->
+  let to_dyn (sctx, path) =
+    Dyn.Tuple [Super_context.to_dyn sctx; Path.to_dyn path;]
+
+  let to_sexp t = Dyn.to_sexp (to_dyn t)
+  let equal = Tuple.T2.equal Super_context.equal Path.equal
+  let hash = Tuple.T2.hash Super_context.hash Path.hash
+end
+
+let get0_impl (sctx, dir) : result0 =
+  let dir_status_db = Super_context.dir_status_db sctx in
+  match Dir_status.DB.get dir_status_db ~dir with
+  | Standalone x ->
+    (match x with
+     | Some (ft_dir, Some d) ->
+       let files, rules =
+         Memo.Implicit_output.collect_sync
+           Build_system.rule_collection_implicit_output
+           (fun () -> load_text_files sctx ft_dir d)
+       in
+       Here {
+         t = { kind = Standalone
+             ; dir
+             ; text_files = files
+             ; modules = Memo.lazy_ (fun () ->
+                 Modules.make d
+                   ~modules:(modules_of_files ~dir:d.ctx_dir ~files))
+             ; mlds = Memo.lazy_ (fun () -> build_mlds_map d ~files)
+             ; c_sources = Memo.lazy_ (fun () ->
+                 let dune_version = d.dune_version in
+                 C_sources.make d
+                   ~c_sources:(C_sources.load_sources ~dune_version ~dir:d.ctx_dir
+                                 ~files))
+             ; coq_modules =
+                 Memo.lazy_ (fun () ->
+                   build_coq_modules_map d ~dir:d.ctx_dir
+                     ~modules:(coq_modules_of_files ~subdirs:[dir,[],files]))
+             };
+         rules;
+         subdirs = Path.Map.empty;
+       }
+     | Some (_, None)
+     | None ->
+       Here {
+         t = { kind = Standalone
+             ; dir
+             ; text_files = String.Set.empty
+             ; modules = (fun () -> Modules.empty)
+             ; mlds = (fun () -> [])
+             ; c_sources = (fun () -> C_sources.empty)
+             ; coq_modules = (fun () -> String.Map.empty)
+             };
+         rules = None;
+         subdirs = Path.Map.empty;
+       })
+  | Is_component_of_a_group_but_not_the_root { depth; _ } ->
+    See_above depth
+  | Group_root (ft_dir, d) ->
+    let rec walk ft_dir ~dir ~local acc =
+      match
+        Dir_status.DB.get dir_status_db ~dir
+      with
+      | Is_component_of_a_group_but_not_the_root { stanzas = d; depth = _ } ->
+        let files =
+          match d with
+          | None -> File_tree.Dir.files ft_dir
+          | Some d -> load_text_files sctx ft_dir d
+        in
+        walk_children ft_dir ~dir  ~local ((dir, local, files) :: acc)
+      | _ -> acc
+    and walk_children ft_dir ~dir ~local acc =
+      String.Map.foldi (File_tree.Dir.sub_dirs ft_dir) ~init:acc
+        ~f:(fun name ft_dir acc ->
+          let dir = Path.relative dir name in
+          let local = local @ [name] in
+          walk ft_dir ~dir ~local acc)
+    in
+    let (files, subdirs), rules =
+      Memo.Implicit_output.collect_sync
+        Build_system.rule_collection_implicit_output (fun () ->
           let files = load_text_files sctx ft_dir d in
-          { kind = Standalone
-          ; dir
-          ; text_files = files
-          ; modules = lazy (Modules.make d
-                              ~modules:(modules_of_files ~dir:d.ctx_dir ~files))
-          ; mlds = lazy (build_mlds_map d ~files)
-          ; c_sources = lazy (
-              let dune_version = d.dune_version in
-              C_sources.make d
-                ~c_sources:(C_sources.load_sources ~dune_version ~dir:d.ctx_dir
-                              ~files))
-          ; coq_modules =
-              lazy (build_coq_modules_map d ~dir:d.ctx_dir
-                      ~modules:(coq_modules_of_files ~subdirs:[dir,[],files]))
-          }
-        | Some (_, None)
-        | None ->
-          { kind = Standalone
-          ; dir
-          ; text_files = String.Set.empty
-          ; modules = lazy Modules.empty
-          ; mlds = lazy []
-          ; c_sources = lazy C_sources.empty
-          ; coq_modules = lazy String.Map.empty
-          }
+          let subdirs = walk_children ft_dir ~dir ~local:[] [] in
+          files, subdirs)
+    in
+    let modules = Memo.lazy_ (fun () ->
+      let modules =
+        List.fold_left ((dir, [], files) :: subdirs) ~init:Module.Name.Map.empty
+          ~f:(fun acc (dir, _local, files) ->
+            let modules = modules_of_files ~dir ~files in
+            Module.Name.Map.union acc modules ~f:(fun name x y ->
+              Errors.fail (Loc.in_file
+                             (match File_tree.Dir.dune_file ft_dir with
+                              | None ->
+                                Path.relative (File_tree.Dir.path ft_dir)
+                                  "_unknown_"
+                              | Some d -> File_tree.Dune_file.path d))
+                "Module %a appears in several directories:\
+                 @\n- %a\
+                 @\n- %a"
+                Module.Name.pp_quote name
+                (Fmt.optional Path.pp) (Module.Source.src_dir x)
+                (Fmt.optional Path.pp) (Module.Source.src_dir y)))
       in
-      Hashtbl.add cache dir t;
-      t
-    | Is_component_of_a_group_but_not_the_root _ -> begin
-        match Hashtbl.find cache dir with
-        | Some t -> t
-        | None ->
-          ignore (get sctx ~dir:(Path.parent_exn dir) : t);
-          (* Filled while scanning the group root *)
-          Hashtbl.find_exn cache dir
-      end
-    | Group_root (ft_dir, d) ->
-      let rec walk ft_dir ~dir ~local acc =
-        match
-          Dir_status.DB.get dir_status_db ~dir
-        with
-        | Is_component_of_a_group_but_not_the_root d ->
-          let files =
-            match d with
-            | None -> File_tree.Dir.files ft_dir
-            | Some d -> load_text_files sctx ft_dir d
-          in
-          walk_children ft_dir ~dir ~local ((dir, local, files) :: acc)
-        | _ -> acc
-      and walk_children ft_dir ~dir ~local acc =
-        String.Map.foldi (File_tree.Dir.sub_dirs ft_dir) ~init:acc
-          ~f:(fun name ft_dir acc ->
-            let dir = Path.relative dir name in
-            let local = local @ [name] in
-            walk ft_dir ~dir ~local acc)
-      in
-      let files = load_text_files sctx ft_dir d in
-      let subdirs = walk_children ft_dir ~dir ~local:[] [] in
-      let modules = lazy (
-        let modules =
-          List.fold_left ((dir, [], files) :: subdirs) ~init:Module.Name.Map.empty
-            ~f:(fun acc (dir, _, files) ->
-              let modules = modules_of_files ~dir ~files in
-              Module.Name.Map.union acc modules ~f:(fun name x y ->
+      Modules.make d ~modules)
+    in
+    let c_sources = Memo.lazy_ (fun () ->
+      let dune_version = d.dune_version in
+      let init = C.Kind.Dict.make String.Map.empty in
+      let c_sources =
+        List.fold_left ((dir, [], files) :: subdirs) ~init
+          ~f:(fun acc (dir, _, files) ->
+            let sources = C_sources.load_sources ~dir ~dune_version ~files in
+            let f acc sources =
+              String.Map.union acc sources ~f:(fun name x y ->
                 Errors.fail (Loc.in_file
                                (match File_tree.Dir.dune_file ft_dir with
                                 | None ->
                                   Path.relative (File_tree.Dir.path ft_dir)
                                     "_unknown_"
                                 | Some d -> File_tree.Dune_file.path d))
-                  "Module %a appears in several directories:\
+                  "%a file %s appears in several directories:\
                    @\n- %a\
-                   @\n- %a"
-                  Module.Name.pp_quote name
-                  (Fmt.optional Path.pp) (Module.Source.src_dir x)
-                  (Fmt.optional Path.pp) (Module.Source.src_dir y)))
-        in
-        Modules.make d ~modules)
+                   @\n- %a\
+                   @\nThis is not allowed, please rename one of them."
+                  (C.Kind.pp) (C.Source.kind x)
+                  name
+                  Path.pp_in_source (C.Source.src_dir x)
+                  Path.pp_in_source (C.Source.src_dir y))
+            in
+            C.Kind.Dict.merge acc sources ~f)
       in
-      let c_sources = lazy (
-        let dune_version = d.dune_version in
-        let init = C.Kind.Dict.make String.Map.empty in
-        let c_sources =
-          List.fold_left ((dir, [], files) :: subdirs) ~init
-            ~f:(fun acc (dir, _, files) ->
-              let sources = C_sources.load_sources ~dir ~dune_version ~files in
-              let f acc sources =
-                String.Map.union acc sources ~f:(fun name x y ->
-                  Errors.fail (Loc.in_file
-                                (match File_tree.Dir.dune_file ft_dir with
-                                  | None ->
-                                    Path.relative (File_tree.Dir.path ft_dir)
-                                      "_unknown_"
-                                  | Some d -> File_tree.Dune_file.path d))
-                    "%a file %s appears in several directories:\
-                    @\n- %a\
-                    @\n- %a\
-                    @\nThis is not allowed, please rename one of them."
-                    (C.Kind.pp) (C.Source.kind x)
-                    name
-                    Path.pp_in_source (C.Source.src_dir x)
-                    Path.pp_in_source (C.Source.src_dir y))
-              in
-              C.Kind.Dict.merge acc sources ~f)
-        in
-        C_sources.make d ~c_sources
-      ) in
-      let coq_modules = lazy (
+      C_sources.make d ~c_sources
+    ) in
+    let coq_modules = Memo.lazy_ (fun () -> (
         build_coq_modules_map d ~dir:d.ctx_dir
           ~modules:(coq_modules_of_files ~subdirs:((dir,[],files)::subdirs))
-      ) in
-      let t =
-        { kind = Group_root
-                   (lazy (List.map subdirs ~f:(fun (dir, _, _) -> get sctx ~dir)))
+      )) in
+    let t =
+      { kind = Group_root
+                 (Memo.lazy_ (fun () ->
+                    List.map subdirs ~f:(fun (dir, _, _) ->
+                      Fdecl.get get_without_rules_fdecl (sctx, dir)
+                    )))
+      ; dir
+      ; text_files = files
+      ; modules
+      ; c_sources
+      ; mlds = Memo.lazy_ (fun () -> build_mlds_map d ~files)
+      ; coq_modules
+      }
+    in
+    let
+      subdirs =
+      List.map subdirs ~f:(fun (dir, _local, files) ->
+        dir,
+        { kind = Group_part t
         ; dir
         ; text_files = files
         ; modules
         ; c_sources
-        ; mlds = lazy (build_mlds_map d ~files)
+        ; mlds = Memo.lazy_ (fun () -> (build_mlds_map d ~files))
         ; coq_modules
-        }
-      in
-      Hashtbl.add cache dir t;
-      List.iter subdirs ~f:(fun (dir, _local, files) ->
-        Hashtbl.add cache dir
-          { kind = Group_part t
-          ; dir
-          ; text_files = files
-          ; modules
-          ; c_sources
-          ; mlds = lazy (build_mlds_map d ~files)
-          ; coq_modules
-          });
-      t
+        })
+      |> Path.Map.of_list_exn
+    in
+    Here {
+      t;
+      rules;
+      subdirs;
+    }
+
+let memo0 =
+  let module Output = struct
+    type t = result0
+    let to_sexp _ = Sexp.Atom "<opaque>"
+  end
+  in
+  Memo.create
+    "dir-contents-memo0"
+    ~input:(module Key)
+    ~output:(Simple (module Output))
+    ~doc:"dir contents"
+    ~visibility:Hidden
+    Sync
+    (Some get0_impl)
+
+let rec strip_suffix n dir =
+  assert (n >= 0);
+  if n = 0 then
+    dir
+  else
+    strip_suffix (n - 1) (Path.parent_exn dir)
+
+type get_result =
+  | Standalone_or_root of t
+  | Group_part of Path.t
+
+let get key =
+  match Memo.exec memo0 key with
+  | See_above depth ->
+    let (_, dir) = key in
+    None, Group_part (strip_suffix depth dir)
+  | Here { t; rules; subdirs = _ } ->
+    rules, Standalone_or_root t
+
+let get_without_rules key =
+  let _rules, res = get key in
+  match res with
+  | Standalone_or_root t -> t
+  | Group_part group_root ->
+    let (sctx, dir) = key in
+    match Memo.exec memo0 (sctx, group_root) with
+    | See_above _ -> assert false
+    | Here { t = _; rules; subdirs } ->
+      ignore rules;
+      Path.Map.find_exn subdirs dir
+
+let () =
+  Fdecl.set get_without_rules_fdecl
+    get_without_rules
+
+let get_without_rules sctx ~dir = get_without_rules (sctx, dir)
+
+let get sctx ~dir =
+  let rules, res = get (sctx, dir) in
+  (Memo.Implicit_output.produce_opt
+     Build_system.rule_collection_implicit_output
+     rules);
+  res
