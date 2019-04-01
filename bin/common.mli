@@ -2,6 +2,7 @@ type t =
   { debug_dep_path        : bool
   ; debug_findlib         : bool
   ; debug_backtraces      : bool
+  ; debug_extra_backtraces : bool
   ; profile               : string option
   ; workspace_file        : Arg.Path.t option
   ; root                  : string
