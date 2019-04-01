@@ -167,6 +167,8 @@ val function_info : string -> Function_info.t
 module Lazy : sig
   type 'a t
 
+  val map2 : 'a t -> 'b t -> f:('a -> 'b -> 'c) -> 'c t
+
   val create : (unit -> 'a) -> 'a t
   val of_val : 'a -> 'a t
   val force : 'a t -> 'a

@@ -175,6 +175,8 @@ val drop_optional_build_context_src_exn : t -> Source.t
     [sandbox_dir]. *)
 val sandbox_managed_paths : sandbox_dir:t -> t -> t
 
+val explode_after_build_dir_exn : t -> string list
+
 val explode : t -> string list option
 val explode_exn : t -> string list
 

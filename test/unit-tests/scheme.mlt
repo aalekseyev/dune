@@ -1,0 +1,48 @@
+open Stdune
+
+let print =
+  In_expect_test.printf "%s\n"
+
+module Directory_rules = struct
+  type element =
+    | File of string
+    | Thunk of (unit -> t)
+  and
+    t = element Appendable_list.t
+
+  let empty = Appendable_list.empty
+  let union = Appendable_list.(@)
+  let concat t = List.fold_left t ~init:empty ~f:union
+  let thunk f = Appendable_list.singleton (Thunk f)
+  let file f = Appendable_list.singleton (File f)
+
+  let rec force l =
+    List.concat_map (Appendable_list.to_list l) ~f:(function
+      | File t -> [t]
+      | Thunk f ->
+        force (f ()))
+end
+
+module Scheme = struct
+  include Dune.Scheme.For_tests
+  include Dune.Scheme.Make(Directory_rules)
+end
+
+let collect_rules scheme ~dir =
+  List.iter
+    (Directory_rules.force (Scheme.For_tests.collect_rules_simple scheme ~dir))
+    ~f:(fun s -> print ("    " ^ s))
+
+let () =
+  Path.set_build_dir (Path.Kind.of_string "build-dir")
+[%%ignore]
+
+let () =
+  let scheme =
+    Scheme.instrument ~print (Dune.Scheme.Thunk (fun () -> Empty))
+  in
+  collect_rules scheme ~dir:(Path.of_string "foo/bar")
+
+[%%expect{|
+thunk
+|}]

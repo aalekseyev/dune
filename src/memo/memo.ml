@@ -724,6 +724,10 @@ module Lazy = struct
   let of_val x = fun () -> x
   let create f = lazy_ f
   let force f = f ()
+
+  let map2 x y ~f =
+    create (fun () -> f (x ()) (y ()))
+
 end
 
 module With_implicit_output = struct
