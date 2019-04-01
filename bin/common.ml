@@ -19,6 +19,7 @@ type t =
   { debug_dep_path        : bool
   ; debug_findlib         : bool
   ; debug_backtraces      : bool
+  ; debug_extra_backtraces      : bool
   ; profile               : string option
   ; workspace_file        : Arg.Path.t option
   ; root                  : Workspace_root.t
@@ -54,6 +55,7 @@ let set_common_other c ~targets =
   Clflags.debug_dep_path := c.debug_dep_path;
   Clflags.debug_findlib := c.debug_findlib;
   Clflags.debug_backtraces := c.debug_backtraces;
+  Clflags.debug_extra_backtraces := c.debug_extra_backtraces;
   Clflags.capture_outputs := c.capture_outputs;
   Clflags.diff_command := c.diff_command;
   Clflags.auto_promote := c.auto_promote;
@@ -134,6 +136,12 @@ let term =
          & flag
          & info ["debug-backtraces"] ~docs
              ~doc:{|Always print exception backtraces.|})
+  and+ debug_extra_backtraces =
+    Arg.(value
+         & flag
+         & info ["debug-extra-backtraces"] ~docs
+             ~doc:{|Capture extra exception backtraces (can have a
+                    significant performance impact).|})
   and+ display =
     Term.ret @@
     let+ verbose =
@@ -393,6 +401,7 @@ let term =
   { debug_dep_path
   ; debug_findlib
   ; debug_backtraces
+  ; debug_extra_backtraces
   ; profile
   ; capture_outputs = not no_buffer
   ; workspace_file

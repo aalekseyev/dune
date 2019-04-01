@@ -197,6 +197,9 @@ let bootstrap () =
       ; "--debug-backtraces",
         Set Clflags.debug_backtraces,
         " always print exception backtraces"
+      ; "--debug-extra-backtraces",
+        Set Clflags.debug_extra_backtraces,
+        " capture extra backtraces (has a significant performance cost)"
       ]
       anon "Usage: boot.exe [-j JOBS] [--dev]\nOptions are:";
     Clflags.debug_dep_path := true;

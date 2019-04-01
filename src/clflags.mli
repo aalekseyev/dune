@@ -15,6 +15,9 @@ val capture_outputs : bool ref
 (** Always print backtraces, to help debugging dune itself *)
 val debug_backtraces : bool ref
 
+(** Capture extra backtraces (has a significant performance cost) *)
+val debug_extra_backtraces : bool ref
+
 (** Command to use to diff things *)
 val diff_command : string option ref
 
