@@ -728,6 +728,9 @@ module Lazy = struct
   let map2 x y ~f =
     create (fun () -> f (x ()) (y ()))
 
+  let bind x ~f =
+    create (fun () -> force (f (force x)))
+
 end
 
 module With_implicit_output = struct

@@ -5,7 +5,7 @@ open! Stdune
 type 'rules t =
   | Empty
   | Union of 'rules t * 'rules t
-  | Approximation_subtree of Path.Set.t * 'rules t
+  | Approximation_subtree of Dir_set.t * 'rules t
   | Finite of 'rules Path.Map.t
   | Thunk of (unit -> 'rules t)
 
