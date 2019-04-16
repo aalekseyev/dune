@@ -28,21 +28,118 @@ module Scheme = struct
   include Dune.Scheme.Make(Directory_rules)
 end
 
-let collect_rules scheme ~dir =
-  List.iter
-    (Directory_rules.force (Scheme.For_tests.collect_rules_simple scheme ~dir))
-    ~f:(fun s -> print ("    " ^ s))
+module Dir_set = Dune.Dir_set
 
 let () =
   Path.set_build_dir (Path.Kind.of_string "build-dir")
+
+module Path = struct
+  let of_string str = Path.L.relative Path.build_dir (
+    match String.split str ~on:'/' with
+    | [""] -> []
+    | ["."] -> []
+    | other -> other)
+end
+
+[%%ignore]
+
+let record_calls scheme ~f =
+  let calls = ref [] in
+  let scheme =
+    Scheme.instrument ~print:(fun s -> calls := s :: !calls) scheme
+  in
+  let res = f scheme in
+  (Directory_rules.force res, !calls)
+
+let print_rules scheme ~dir =
+  let res1, calls1 =
+    record_calls scheme ~f:(Scheme.For_tests.collect_rules_simple ~dir)
+  in
+  let res2, calls2 =
+    record_calls scheme ~f:(fun scheme ->
+      Scheme.get_rules (Scheme.evaluate scheme) ~dir)
+  in
+  if not ((res1 : string list) = res2)
+  then
+    Exn.code_error
+      "Naive [collect_rules_simple] gives result inconsistent with [Scheme.evaluate]"
+      [
+        "res1", Sexp.List (List.map res1 ~f:(fun s -> Sexp.Atom s));
+        "res2", Sexp.List (List.map res2 ~f:(fun s -> Sexp.Atom s));
+      ]
+  else
+    (
+      let print_log log =
+        let log = match log with | [] -> ["<none>"] | x -> x in
+        List.iter log ~f:(fun s -> print ("    " ^ s))
+      in
+      (if not ((calls1 : string list) = calls2) then (
+         print "inconsistent laziness behavior:";
+         print "naive calls:";
+         print_log calls1;
+         print "[evalulate] calls:";
+         print_log calls2;)
+       else (
+         print "calls:";
+         print_log calls1
+       )
+      );
+      print "rules:";
+      print_log res1)
 [%%ignore]
 
 let () =
   let scheme =
-    Scheme.instrument ~print (Dune.Scheme.Thunk (fun () -> Empty))
+    Dune.Scheme.Thunk (fun () -> Empty)
   in
-  collect_rules scheme ~dir:(Path.of_string "foo/bar")
+  print_rules scheme ~dir:(Path.of_string "foo/bar")
 
 [%%expect{|
-thunk
+calls:
+    thunk
+rules:
+    <none>
+|}]
+
+let scheme_all_but_foo_bar =
+  Dune.Scheme.Approximation (
+    Dir_set.negate (Dir_set.of_list [Subtree (Path.of_string "foo/bar")]),
+    Thunk (fun () -> Empty))
+
+[%%ignore]
+
+let () =
+  print_rules scheme_all_but_foo_bar ~dir:(Path.of_string "unrelated/dir")
+
+[%%expect{|
+calls:
+    t:thunk
+rules:
+    <none>
+|}]
+
+let () =
+  print_rules scheme_all_but_foo_bar ~dir:(Path.of_string "foo/bar")
+
+[%%expect{|
+inconsistent laziness behavior:
+naive calls:
+    <none>
+[evalulate] calls:
+    t:thunk
+rules:
+    <none>
+|}]
+
+let () =
+  print_rules scheme_all_but_foo_bar ~dir:(Path.of_string "foo/bar/baz")
+
+[%%expect{|
+inconsistent laziness behavior:
+naive calls:
+    <none>
+[evalulate] calls:
+    t:thunk
+rules:
+    <none>
 |}]
