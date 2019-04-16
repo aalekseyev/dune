@@ -24,7 +24,7 @@ module Directory_rules = struct
 end
 
 module Scheme = struct
-  include Dune.Scheme.For_tests
+  include Dune.Scheme.Gen.For_tests
   include Dune.Scheme.Make(Directory_rules)
 end
 

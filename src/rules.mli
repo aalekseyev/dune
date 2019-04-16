@@ -8,6 +8,8 @@ type rule = unit -> unit
 
 type t = private rule Path.Map.t
 
+val to_map : t -> rule Path.Map.t
+
 val file_rule : rule:(Path.t * rule) -> unit
 
 val dir_rule : (Path.t * rule) -> unit

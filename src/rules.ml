@@ -34,3 +34,5 @@ let dir_rule arg =
 let collect f =
   let result, out = Memo.Implicit_output.collect_sync implicit_output f in
   result, Option.value out ~default:T.empty
+
+let to_map x = x

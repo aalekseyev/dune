@@ -92,7 +92,7 @@ let rec intersect x y =
   match T.match_ x, T.match_ y with
   | `Universal, _ -> y
   | _, `Universal -> x
-  | `Empty, _ | _, `Empty -> T.universal
+  | `Empty, _ | _, `Empty -> T.empty
   | `Nontrivial _, `Nontrivial _ ->
     { here = x.here && y.here;
       children = intersect_children x.children y.children;
@@ -167,5 +167,30 @@ let of_individual_dirs paths =
   List.map paths ~f:(of_subtree_gen just_the_root)
   |> union_all
 
+type element =
+  | One_dir of Path.t
+  | Subtree of Path.t
+
+let of_list list =
+  List.map list ~f:(function
+    | One_dir dir -> of_subtree_gen just_the_root dir
+    | Subtree dir -> of_subtree_gen T.universal dir)
+  |> union_all
+
 let is_subset x ~of_ =
   is_empty (intersect x (negate of_))
+
+let rec to_sexp t = match match_ t with
+  | `Empty -> Sexp.Atom "Empty"
+  | `Universal -> Sexp.Atom "Universal"
+  | `Nontrivial _ ->
+    Sexp.List (
+      (
+        (match t.here with | true -> [ ".", Sexp.Atom "true" ] | false -> []) @
+        (String.Map.to_list t.children.exceptions
+         |> List.map ~f:(fun (s, t) ->
+           s, to_sexp t)) @
+        (match t.children.default with
+         | false -> []
+         | true -> [("*", Sexp.Atom "Universal")]))
+      |> List.map ~f:(fun (k, v) -> Sexp.List [Sexp.Atom k; v]))

@@ -36,4 +36,16 @@ val descend : t -> string -> t
 val of_subtrees : Path.t list -> t
 val of_individual_dirs : Path.t list -> t
 
+type element =
+  | One_dir of Path.t
+  | Subtree of Path.t
+
+val of_list : element list -> t
+
 val is_subset : t -> of_:t -> bool
+
+val union : t -> t -> t
+val intersect : t -> t -> t
+val negate : t -> t
+
+val to_sexp : t -> Sexp.t
