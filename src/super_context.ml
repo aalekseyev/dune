@@ -142,7 +142,7 @@ end = struct
   let expander t ~dir =
     let expander = expander_for_artifacts t ~dir in
     let bin_artifacts_host = bin_artifacts_host t ~dir in
-    Expander.set_bin_artifacts expander ~bin_artifacts_host
+    Expander.set_bin_artifacts expander ~bin_artifacts_host:(Some bin_artifacts_host)
 
   let ocaml_flags t ~dir =
     Env_node.ocaml_flags (get t ~dir)
@@ -355,7 +355,7 @@ let create
       ~scope:(Scope.DB.find_by_dir scopes context.build_dir)
       ~context
       ~lib_artifacts:artifacts.public_libs
-      ~bin_artifacts_host:artifacts_host.local_bins
+      ~bin_artifacts_host:(Some artifacts_host.local_bins)
   in
   let dir_status_db = Dir_status.DB.make file_tree ~stanzas_per_dir in
   { context
@@ -597,11 +597,10 @@ module Action = struct
               ~deps_written_by_user in
           U.Partial.expand t ~expander ~map_exe
         in
-        let bin_artifacts = Expander.bin_artifacts_host expander in
         Action.Unresolved.resolve unresolved ~f:(fun loc prog ->
-          match Artifacts.Local_bins.binary ~loc bin_artifacts prog with
+          match Expander.resolve_binary ~loc expander ~prog with
           | Ok path    -> path
-          | Error fail -> Action.Prog.Not_found.raise fail))
+          | Error { fail } -> fail ()))
       >>>
       Build.dyn_path_set (Build.arr (fun action ->
         let { U.Infer.Outcome.deps; targets = _ } =
