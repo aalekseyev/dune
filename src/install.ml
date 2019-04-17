@@ -159,14 +159,18 @@ module Section = struct
 
     let install_path t section p =
       let section_path = get t section in
-      match section with
-      | Man ->
+      let p =
+        match section with
+        | Man ->
           begin
             match man_subdir p with
-            | Some subdir -> Path.L.relative section_path [subdir; p]
-            | None -> Path.relative section_path p
+            | Some subdir -> [subdir; p]
+            | None -> [p]
           end
-      | _ -> Path.relative section_path p
+        | _ -> [p]
+      in
+      Path.L.relative section_path p
+
   end
 end
 
@@ -213,21 +217,8 @@ module Entry = struct
   let set_src t src = { t with src }
 
   let relative_installed_path t ~paths =
-    let main_dir = Section.Paths.get paths t.section in
-    let dst =
-      match t.dst with
-      | Some x -> x
-      | None ->
-        let dst = Path.basename t.src in
-        match t.section with
-        | Man -> begin
-            match String.rsplit2 dst ~on:'.' with
-            | None -> dst
-            | Some (_, sec) -> sprintf "man%s/%s" sec dst
-          end
-        | _ -> dst
-    in
-    Path.relative main_dir dst
+    Section.Paths.install_path paths t.section
+      (Option.value t.dst ~default:(Path.basename t.src))
 
   let add_install_prefix t ~paths ~prefix =
     let opam_will_install_in_this_dir = Section.Paths.get paths t.section in
