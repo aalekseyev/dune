@@ -1,7 +1,7 @@
 open! Stdune
 open! Import
 
-module Local_bins : sig
+module Bin : sig
   type t
 
   (** A named artifact that is looked up in the PATH if not found in the tree
@@ -20,6 +20,22 @@ module Local_bins : sig
     -> File_binding.Expanded.t list
     -> t
 
+  module Partial : sig
+    type t
+
+    val empty : t
+
+    val merge : shadowing:t -> shadowed:t -> t
+
+    val add_binaries
+      :  t
+      -> dir:Path.t
+      -> File_binding.Expanded.t list
+      -> t
+  end
+
+  val create' : Context.t -> Partial.t -> t
+
 end
 
 module Public_libs : sig
@@ -37,7 +53,7 @@ end
 
 type t = {
   public_libs : Public_libs.t;
-  local_bins : Local_bins.t;
+  bin : Bin.t;
 }
 
 val create

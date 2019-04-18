@@ -35,6 +35,6 @@ val local_binaries
 val bin_artifacts
   :  t
   -> profile:string
-  -> default:Artifacts.Local_bins.t
+  -> default:Artifacts.Bin.t
   -> expander:Expander.t
-  -> Artifacts.Local_bins.t
+  -> Artifacts.Bin.t

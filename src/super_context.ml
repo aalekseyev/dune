@@ -67,7 +67,7 @@ module Env : sig
   val ocaml_flags : t -> dir:Path.t -> Ocaml_flags.t
   val c_flags : t -> dir:Path.t -> (unit, string list) Build.t C.Kind.Dict.t
   val external_ : t -> dir:Path.t -> External_env.t
-  val bin_artifacts_host : t -> dir:Path.t -> Artifacts.Local_bins.t
+  val bin_artifacts_host : t -> dir:Path.t -> Artifacts.Bin.t
   val expander : t -> dir:Path.t -> Expander.t
   val local_binaries : t -> dir:Path.t -> File_binding.Expanded.t list
 end = struct
@@ -127,7 +127,7 @@ end = struct
   let bin_artifacts t ~dir =
     let expander = expander_for_artifacts t ~dir in
     Env_node.bin_artifacts
-      (get t ~dir) ~profile:(profile t) ~default:t.artifacts.local_bins
+      (get t ~dir) ~profile:(profile t) ~default:t.artifacts.bin
       ~expander
 
   let bin_artifacts_host t ~dir =
@@ -273,7 +273,7 @@ let dump_env t ~dir =
 
 let resolve_program t ~dir ?hint ~loc bin =
   let bin_artifacts = Env.bin_artifacts_host t ~dir in
-  Artifacts.Local_bins.binary ?hint ~loc bin_artifacts bin
+  Artifacts.Bin.binary ?hint ~loc bin_artifacts bin
 
 let create
       ~(context:Context.t)
@@ -355,7 +355,7 @@ let create
       ~scope:(Scope.DB.find_by_dir scopes context.build_dir)
       ~context
       ~lib_artifacts:artifacts.public_libs
-      ~bin_artifacts_host:(Some artifacts_host.local_bins)
+      ~bin_artifacts_host:(Some artifacts_host.bin)
   in
   let dir_status_db = Dir_status.DB.make file_tree ~stanzas_per_dir in
   { context

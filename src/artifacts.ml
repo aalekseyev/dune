@@ -1,17 +1,40 @@
 open! Stdune
 open Import
 
-module Local_bins = struct
+module Bin = struct
+
+  module Partial = struct
+    type t = Path.t String.Map.t
+
+    let empty = String.Map.empty
+
+    let add_binaries t ~dir bindings =
+      List.fold_left bindings ~init:t
+        ~f:(fun acc fb ->
+          let path = File_binding.Expanded.dst_path fb
+                       ~dir:(Utils.local_bin dir) in
+          String.Map.add acc (Path.basename path) path)
+
+
+    let merge ~shadowing:x ~shadowed:y =
+      String.Map.merge x y ~f:(fun _key x y ->
+        match x with
+        | Some x -> Some x
+        | None ->
+          y)
+
+  end
+
   type t = {
     context : Context.t;
-    local_bins : Path.t String.Map.t lazy_t;
+    bin : Partial.t lazy_t;
   }
 
   let binary t ?hint ~loc name =
     if not (Filename.is_relative name) then
       Ok (Path.of_filename_relative_to_initial_cwd name)
     else
-      match String.Map.find (Lazy.force t.local_bins) name with
+      match String.Map.find (Lazy.force t.bin) name with
       | Some path -> Ok path
       | None ->
         match Context.which t.context name with
@@ -26,22 +49,11 @@ module Local_bins = struct
             }
 
 
-  let add_binaries t ~dir = function
-    | [] -> t
-    | bindings ->
-      let local_bins =
-        lazy (
-          List.fold_left bindings ~init:(Lazy.force t.local_bins)
-            ~f:(fun acc fb ->
-              let path = File_binding.Expanded.dst_path fb
-                           ~dir:(Utils.local_bin dir) in
-              String.Map.add acc (Path.basename path) path))
-      in
-      { t with local_bins }
-
+  let add_binaries t ~dir l =
+    { t with bin = lazy (Partial.add_binaries (Lazy.force t.bin) ~dir l) }
 
   let create ~(context : Context.t) =
-    let local_bins =
+    let bin =
       let bin_dir = Config.local_install_bin_dir ~context:context.name in
       lazy (
         Build_system.targets_of ~dir:bin_dir
@@ -60,8 +72,10 @@ module Local_bins = struct
       )
     in
     { context
-    ; local_bins
+    ; bin
     }
+
+  let create' context partial = { context; bin = lazy partial }
 
 end
 
@@ -97,10 +111,10 @@ end
 
 type t = {
   public_libs : Public_libs.t;
-  local_bins : Local_bins.t;
+  bin : Bin.t;
 }
 
 let create (context : Context.t) ~public_libs =
   { public_libs = Public_libs.create ~context ~public_libs;
-    local_bins = Local_bins.create ~context;
+    bin = Bin.create ~context;
   }

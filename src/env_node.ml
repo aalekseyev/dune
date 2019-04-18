@@ -9,7 +9,7 @@ type t =
   ; mutable ocaml_flags   : Ocaml_flags.t option
   ; mutable c_flags       : (unit, string list) Build.t C.Kind.Dict.t option
   ; mutable external_     : Env.t option
-  ; mutable bin_artifacts     : Artifacts.Local_bins.t option
+  ; mutable bin_artifacts     : Artifacts.Bin.t option
   }
 
 let scope t = t.scope
@@ -89,7 +89,7 @@ let rec bin_artifacts t ~profile ~default ~expander =
     in
     let bin_artifacts =
       local_binaries t ~profile ~expander
-      |> Artifacts.Local_bins.add_binaries default ~dir:t.dir
+      |> Artifacts.Bin.add_binaries default ~dir:t.dir
     in
     t.bin_artifacts <- Some bin_artifacts;
     bin_artifacts

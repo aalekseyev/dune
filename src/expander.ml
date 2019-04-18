@@ -5,7 +5,7 @@ type t =
   ; hidden_env : Env.Var.Set.t
   ; env : Env.t
   ; lib_artifacts : Artifacts.Public_libs.t
-  ; bin_artifacts_host : Artifacts.Local_bins.t option
+  ; bin_artifacts_host : Artifacts.Bin.t option
   ; ocaml_config : Value.t list String.Map.t Lazy.t
   ; bindings : Pform.Map.t
   ; scope : Scope.t
@@ -216,7 +216,7 @@ let resolve_binary t ~loc ~prog =
           Errors.fail_opt loc
             "@{<error>Error@}: Attempted to use a [bin] expansion in an install stanza." }
   | Some bin_artifacts_host ->
-    match Artifacts.Local_bins.binary ~loc bin_artifacts_host prog with
+    match Artifacts.Bin.binary ~loc bin_artifacts_host prog with
     | Ok path -> Ok path
     | Error e ->
       Error { Import.fail = fun () -> Action.Prog.Not_found.raise e }

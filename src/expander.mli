@@ -19,7 +19,7 @@ val make
   :  scope:Scope.t
   -> context:Context.t
   -> lib_artifacts:Artifacts.Public_libs.t
-  -> bin_artifacts_host:Artifacts.Local_bins.t option
+  -> bin_artifacts_host:Artifacts.Bin.t option
   -> t
 
 val set_env : t -> var:string -> value:string -> t
@@ -32,7 +32,7 @@ val set_scope : t -> scope:Scope.t -> t
 
 val set_bin_artifacts
   :  t
-  -> bin_artifacts_host:Artifacts.Local_bins.t option
+  -> bin_artifacts_host:Artifacts.Bin.t option
   -> t
 
 val add_bindings : t -> bindings:Pform.Map.t -> t
