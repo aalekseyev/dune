@@ -9,3 +9,7 @@ type 'data t =
   ; kind            : Dune_lang.Syntax.t
   ; dune_version    : Syntax.Version.t
   }
+
+val data : 'data t -> 'data
+
+val map : 'a t -> f:('a -> 'b) -> 'b t

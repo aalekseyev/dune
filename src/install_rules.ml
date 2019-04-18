@@ -350,26 +350,13 @@ let install_file sctx (package : Local_package.t) entries =
      >>>
      Build.write_file_dyn fn)
 
+include Install_rules0
+
 let init_binary_artifacts sctx package =
   let installs =
-    Local_package.installs package
-    |> List.concat_map
-         ~f:(fun ({ Dir_with_dune.
-                    data =
-                      { Dune_file.Install_conf. section; files; package = _ }
-                  ; dune_version = _
-                  ; ctx_dir = _
-                  ; src_dir = _
-                  ; scope = _
-                  ; kind = _ }) ->
-              List.map files ~f:(fun fb ->
-                let loc = File_binding.Expanded.src_loc fb in
-                let src = File_binding.Expanded.src fb in
-                let dst = Option.map ~f:Path.Local.to_string
-                            (File_binding.Expanded.dst fb) in
-                ( Some loc
-                , Install.Entry.make section src ?dst
-                )))
+    get_install_entries
+      (Local_package.installs package
+       |> List.map ~f:Dir_with_dune.data)
   in
   let install_paths = Local_package.install_paths package in
   let package = Local_package.name package in

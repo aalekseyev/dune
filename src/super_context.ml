@@ -194,9 +194,6 @@ end = struct
       ~default_context_flags
 end
 
-(* CR-soon aalekseyev: intended to use for install rule bins *)
-let _ = Env.expander_for_artifacts
-
 let expander t = Env.expander t.env_context
 
 let add_rule t ?sandbox ?mode ?locks ?loc ~dir build =
@@ -401,7 +398,33 @@ let create
     bin_artifacts = Memo.lazy_ (fun () -> (Fdecl.get artifacts_decl).Artifacts.bin);
   }
   in
-  let artifacts = Artifacts.create context ~public_libs in
+  let artifacts =
+    let public_libs = ({
+      context;
+      public_libs
+    } : Artifacts.Public_libs.t)
+    in
+    let expander0 =
+      Expander.make
+        ~scope:(Scope.DB.find_by_dir scopes context.build_dir)
+        ~context
+        ~lib_artifacts:public_libs
+        ~bin_artifacts_host:None
+    in
+    { Artifacts.public_libs;
+      bin =
+        Artifacts.Bin.create ~context
+          ~local_bins:(
+            Install_rules0.get_bin_install_entries
+              ~context
+              (Install_rules0.all_installs ~expander:(
+                 Env.expander_for_artifacts
+                   env_context
+                   ~context_expander:expander0
+               ) stanzas)
+          )
+    }
+  in
   Fdecl.set artifacts_decl artifacts;
   let expander =
     let artifacts_host =

@@ -52,11 +52,10 @@ module Bin = struct
   let add_binaries t ~dir l =
     { t with bin = lazy (Partial.add_binaries (Lazy.force t.bin) ~dir l) }
 
-  let create ~(context : Context.t) =
+  let create ~(context : Context.t) ~local_bins =
     let bin =
-      let bin_dir = Config.local_install_bin_dir ~context:context.name in
       lazy (
-        Build_system.targets_of ~dir:bin_dir
+        local_bins
         |> Path.Set.fold ~init:String.Map.empty ~f:(fun path acc ->
           let name = Filename.basename (Path.to_string path) in
           (* The keys in the map are the executable names
@@ -114,7 +113,8 @@ type t = {
   bin : Bin.t;
 }
 
-let create (context : Context.t) ~public_libs =
-  { public_libs = Public_libs.create ~context ~public_libs;
-    bin = Bin.create ~context;
+let create (context : Context.t) ~public_libs ~local_bins =
+  {
+    public_libs = Public_libs.create ~context ~public_libs;
+    bin = Bin.create ~context ~local_bins;
   }

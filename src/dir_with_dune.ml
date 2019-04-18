@@ -8,3 +8,7 @@ type 'data t =
   ; kind            : Dune_lang.Syntax.t
   ; dune_version    : Syntax.Version.t
   }
+
+let data t = t.data
+
+let map t ~f = { t with data = f t.data }
