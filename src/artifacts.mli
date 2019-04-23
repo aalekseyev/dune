@@ -20,22 +20,7 @@ module Bin : sig
     -> File_binding.Expanded.t list
     -> t
 
-  module Partial : sig
-    type t
-
-    val empty : t
-
-    val merge : shadowing:t -> shadowed:t -> t
-
-    val add_binaries
-      :  t
-      -> dir:Path.t
-      -> File_binding.Expanded.t list
-      -> t
-  end
-
   val create : context:Context.t -> local_bins:Path.Set.t -> t
-  val create' : Context.t -> Partial.t -> t
 
 end
 

@@ -6,8 +6,6 @@ module Bin = struct
   module Partial = struct
     type t = Path.t String.Map.t
 
-    let empty = String.Map.empty
-
     let add_binaries t ~dir bindings =
       List.fold_left bindings ~init:t
         ~f:(fun acc fb ->
@@ -15,26 +13,18 @@ module Bin = struct
                        ~dir:(Utils.local_bin dir) in
           String.Map.add acc (Path.basename path) path)
 
-
-    let merge ~shadowing:x ~shadowed:y =
-      String.Map.merge x y ~f:(fun _key x y ->
-        match x with
-        | Some x -> Some x
-        | None ->
-          y)
-
   end
 
   type t = {
     context : Context.t;
-    bin : Partial.t lazy_t;
+    bin : Partial.t;
   }
 
   let binary t ?hint ~loc name =
     if not (Filename.is_relative name) then
       Ok (Path.of_filename_relative_to_initial_cwd name)
     else
-      match String.Map.find (Lazy.force t.bin) name with
+      match String.Map.find t.bin name with
       | Some path -> Ok path
       | None ->
         match Context.which t.context name with
@@ -50,31 +40,27 @@ module Bin = struct
 
 
   let add_binaries t ~dir l =
-    { t with bin = lazy (Partial.add_binaries (Lazy.force t.bin) ~dir l) }
+    { t with bin = Partial.add_binaries t.bin ~dir l }
 
   let create ~(context : Context.t) ~local_bins =
     let bin =
-      lazy (
-        local_bins
-        |> Path.Set.fold ~init:String.Map.empty ~f:(fun path acc ->
-          let name = Filename.basename (Path.to_string path) in
-          (* The keys in the map are the executable names
-           * without the .exe, even on Windows. *)
-          let key =
-            if Sys.win32 then
-              Option.value ~default:name
-                (String.drop_suffix name ~suffix:".exe")
-            else
-              name
-          in
-          String.Map.add acc key path)
-      )
+      local_bins
+      |> Path.Set.fold ~init:String.Map.empty ~f:(fun path acc ->
+        let name = Filename.basename (Path.to_string path) in
+        (* The keys in the map are the executable names
+         * without the .exe, even on Windows. *)
+        let key =
+          if Sys.win32 then
+            Option.value ~default:name
+              (String.drop_suffix name ~suffix:".exe")
+          else
+            name
+        in
+        String.Map.add acc key path)
     in
     { context
     ; bin
     }
-
-  let create' context partial = { context; bin = lazy partial }
 
 end
 
