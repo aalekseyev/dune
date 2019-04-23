@@ -222,15 +222,19 @@ module Entry = struct
 
   let set_src t src = { t with src }
 
+  let relative_destination t =
+    match t.dst with
+    | Some x -> x
+    | None -> Path.basename t.src
+
   let relative_installed_path t ~paths =
     Section.Paths.install_path paths t.section
-      (Option.value t.dst ~default:(Path.basename t.src))
+      (relative_destination t)
 
   let relative_installed_path_for_bin t =
     match t.section with
     | Bin ->
-      Section.Paths.install_path_for_bin
-        (Option.value t.dst ~default:(Path.basename t.src))
+      Section.Paths.install_path_for_bin (relative_destination t)
     | _ ->
       Exn.code_error
         "relative_installed_path_for_bin called on something installed in a section \
