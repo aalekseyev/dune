@@ -14,7 +14,7 @@ let get_install_entries installs =
 
 (* The code below ([all_installs], [expand_stanza], [get_bin_install_entries] is largely
    duplicating the logic of install rules set up. This is done to avoid dependency
-   cycles. (where to learn the set of available binaries you need to compute all install
+   cycles. (to learn the set of available binaries you need to compute all install
    rules, which make use of something that depends on those binaries) *)
 let get_bin_install_entries installs ~context =
   List.concat_map installs
@@ -27,7 +27,7 @@ let get_bin_install_entries installs ~context =
                       (File_binding.Expanded.dst fb) in
           let install_dir = Config.local_install_dir ~context:context.Context.name in
           Path.append install_dir (Install.Entry.relative_installed_path_for_bin
-            (Install.Entry.make section src ?dst))
+                                     (Install.Entry.make section src ?dst))
         )
       | _ -> []
     )
@@ -51,3 +51,8 @@ let all_installs stanzas ~expander =
         | Dune_file.Install install ->
           Some (expand_stanza ~expander ~dir install)
         | _ -> None))
+
+let get_bin_install_entries stanzas ~context ~expander =
+  get_bin_install_entries
+    ~context
+    (all_installs ~expander stanzas)

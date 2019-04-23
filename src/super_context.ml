@@ -417,11 +417,11 @@ let create
           ~local_bins:(
             Install_rules0.get_bin_install_entries
               ~context
-              (Install_rules0.all_installs ~expander:(
-                 Env.expander_for_artifacts
-                   env_context
-                   ~context_expander:expander0
-               ) stanzas)
+              ~expander:(
+                Env.expander_for_artifacts
+                  env_context
+                  ~context_expander:expander0)
+              stanzas
           )
     }
   in
