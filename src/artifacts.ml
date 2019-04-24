@@ -3,28 +3,19 @@ open Import
 
 module Bin = struct
 
-  module Partial = struct
-    type t = Path.t String.Map.t
-
-    let add_binaries t ~dir bindings =
-      List.fold_left bindings ~init:t
-        ~f:(fun acc fb ->
-          let path = File_binding.Expanded.dst_path fb
-                       ~dir:(Utils.local_bin dir) in
-          String.Map.add acc (Path.basename path) path)
-
-  end
-
   type t = {
     context : Context.t;
-    bin : Partial.t;
+    (* Mapping from executable names to their actual path in the
+       workspace. The keys are the executable names without the .exe,
+       even on Windows. *)
+    local_bins : Path.t String.Map.t;
   }
 
   let binary t ?hint ~loc name =
     if not (Filename.is_relative name) then
       Ok (Path.of_filename_relative_to_initial_cwd name)
     else
-      match String.Map.find t.bin name with
+      match String.Map.find t.local_bins name with
       | Some path -> Ok path
       | None ->
         match Context.which t.context name with
@@ -40,15 +31,19 @@ module Bin = struct
 
 
   let add_binaries t ~dir l =
-    { t with bin = Partial.add_binaries t.bin ~dir l }
+    let local_bins =
+      List.fold_left l ~init:t.local_bins
+        ~f:(fun acc fb ->
+          let path = File_binding.Expanded.dst_path fb
+                       ~dir:(Utils.local_bin dir) in
+          String.Map.add acc (Path.basename path) path)
+    in
+    { t with local_bins }
 
   let create ~(context : Context.t) ~local_bins =
-    let bin =
-      local_bins
-      |> Path.Set.fold ~init:String.Map.empty ~f:(fun path acc ->
+    let local_bins =
+      Path.Set.fold local_bins ~init:String.Map.empty ~f:(fun path acc ->
         let name = Filename.basename (Path.to_string path) in
-        (* The keys in the map are the executable names
-         * without the .exe, even on Windows. *)
         let key =
           if Sys.win32 then
             Option.value ~default:name
@@ -59,7 +54,7 @@ module Bin = struct
         String.Map.add acc key path)
     in
     { context
-    ; bin
+    ; local_bins
     }
 
 end
