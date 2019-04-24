@@ -1,6 +1,7 @@
 open! Stdune
 open Import
 
+(* the parts of Super_context sufficient to construct env nodes *)
 module Env_context = struct
   type data = (Path.t, Env_node.t) Hashtbl.t
   type t = {
@@ -13,8 +14,8 @@ module Env_context = struct
     host : t option;
     build_dir : Path.t;
     context : Context.t;
-    expander : Expander.t Memo.Lazy.t;
-    bin_artifacts : Artifacts.Bin.t Memo.Lazy.t;
+    expander : Expander.t;
+    bin_artifacts : Artifacts.Bin.t;
   }
 end
 
@@ -90,7 +91,6 @@ module Env : sig
   val local_binaries : t -> dir:Path.t -> File_binding.Expanded.t list
 end = struct
 
-  (* the parts of Super_context sufficient to construct env nodes *)
   include Env_context
 
   let get_env_stanza t ~dir =
@@ -143,19 +143,18 @@ end = struct
   let local_binaries t ~dir =
     let node = get t ~dir in
     let expander =
-      expander_for_artifacts ~context_expander:(Memo.Lazy.force t.expander) t ~dir
+      expander_for_artifacts ~context_expander:(t.expander) t ~dir
     in
     Env_node.local_binaries node ~profile:t.profile ~expander
 
   let bin_artifacts t ~dir =
-    let expander0 = (Memo.Lazy.force t.expander) in
     let expander =
-      expander_for_artifacts t ~context_expander:expander0 ~dir
+      expander_for_artifacts t ~context_expander:t.expander ~dir
     in
     Env_node.bin_artifacts
       (get t ~dir) ~profile:t.profile
       ~expander
-      ~default:(Memo.Lazy.force t.bin_artifacts)
+      ~default:t.bin_artifacts
 
   let bin_artifacts_host t ~dir =
     match t.host with
@@ -168,7 +167,7 @@ end = struct
 
   let expander t ~dir =
     let expander =
-      expander_for_artifacts t ~context_expander:(Memo.Lazy.force t.expander) ~dir
+      expander_for_artifacts t ~context_expander:t.expander ~dir
     in
     let bin_artifacts_host = bin_artifacts_host t ~dir in
     Expander.set_bin_artifacts
@@ -381,22 +380,6 @@ let create
                                      ~config:workspace)))
   )
   in
-  let artifacts_decl = Fdecl.create () in
-  let expander_decl = Fdecl.create () in
-  let env_context = { Env_context.
-    env;
-    profile = context.profile;
-    scopes;
-    context_env = context.env;
-    default_env;
-    stanzas_per_dir;
-    host = Option.map host ~f:(fun x -> x.env_context);
-    build_dir = context.build_dir;
-    context = context;
-    expander = Memo.lazy_ (fun () -> Fdecl.get expander_decl);
-    bin_artifacts = Memo.lazy_ (fun () -> (Fdecl.get artifacts_decl).Artifacts.bin);
-  }
-  in
   let artifacts =
     let public_libs = ({
       context;
@@ -420,7 +403,6 @@ let create
           )
     }
   in
-  Fdecl.set artifacts_decl artifacts;
   let expander =
     let artifacts_host =
       match host with
@@ -433,7 +415,20 @@ let create
       ~lib_artifacts:artifacts.public_libs
       ~bin_artifacts_host:artifacts_host.bin
   in
-  Fdecl.set expander_decl expander;
+  let env_context = { Env_context.
+    env;
+    profile = context.profile;
+    scopes;
+    context_env = context.env;
+    default_env;
+    stanzas_per_dir;
+    host = Option.map host ~f:(fun x -> x.env_context);
+    build_dir = context.build_dir;
+    context = context;
+    expander = expander;
+    bin_artifacts = artifacts.Artifacts.bin;
+  }
+  in
   let dir_status_db = Dir_status.DB.make file_tree ~stanzas_per_dir in
   { context
   ; expander
