@@ -36,9 +36,11 @@ module Unexpanded = struct
     }
 
   let expand_src t ~dir ~f = Path.relative dir (f t.src)
-  let expand_dst t ~f =
-    Option.map t.dst ~f:(fun sw ->
-      Path.Local.of_string (f sw))
+
+  let destination_relative_to_install_path t ~f =
+    match t.dst with
+    | Some dst -> Path.Local.of_string (f dst)
+    | None -> Path.Local.of_string (Filename.basename (f t.src))
 
   let expand t ~dir ~f =
     let f sw = (String_with_vars.loc sw, f sw) in

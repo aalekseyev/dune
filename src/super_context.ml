@@ -317,22 +317,14 @@ let get_installed_binaries stanzas ~(context : Context.t) ~expander =
     | Dune_file.Install { section = Bin; files; _ } ->
       let expand_str = Expander.expand_str (expander ~dir:d.ctx_dir) in
       List.fold_left files ~init:acc ~f:(fun acc fb ->
-        match
-          match File_binding.Unexpanded.expand_dst fb ~f:expand_str with
-          | None ->
-            Some
-              (File_binding.Unexpanded.expand_src fb ~dir:d.ctx_dir
-                 ~f:expand_str
-               |> Path.basename)
-          | Some p ->
-            if Path.Local.is_root (Path.Local.parent_exn p) then
-              Some (Path.Local.basename p)
-            else
-              None
-        with
-        | None -> acc
-        | Some basename ->
-          Path.Set.add acc (Path.relative install_dir basename))
+        let p =
+          File_binding.Unexpanded.destination_relative_to_install_path
+            fb ~f:expand_str
+        in
+        if Path.Local.is_root (Path.Local.parent_exn p) then
+          Path.Set.add acc (Path.append_local install_dir p)
+        else
+          acc)
     | _ -> acc)
 
 let create
