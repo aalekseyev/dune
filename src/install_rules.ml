@@ -350,14 +350,23 @@ let install_file sctx (package : Local_package.t) entries =
      >>>
      Build.write_file_dyn fn)
 
-include Install_rules0
+let get_install_entries package =
+  Local_package.installs package
+  |> List.concat_map ~f:(fun (d : _ Dir_with_dune.t) ->
+    let { Dune_file.Install_conf. section; files; package = _ } =
+      d.data
+    in
+    List.map files ~f:(fun fb ->
+      let loc = File_binding.Expanded.src_loc fb in
+      let src = File_binding.Expanded.src fb in
+      let dst = Option.map ~f:Path.Local.to_string
+                  (File_binding.Expanded.dst fb) in
+      ( Some loc
+      , Install.Entry.make section src ?dst
+      )))
 
-let init_install sctx (package : Local_package.t) =
-  let installs =
-    get_install_entries
-      (Local_package.installs package
-       |> List.map ~f:Dir_with_dune.data)
-  in
+let init_install sctx package =
+  let installs = get_install_entries package in
   let docs =
     Local_package.mlds package
     |> List.map ~f:(fun mld ->

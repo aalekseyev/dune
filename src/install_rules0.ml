@@ -1,17 +1,5 @@
 open! Stdune
 
-let get_install_entries installs =
-  List.concat_map installs
-    ~f:(fun { Dune_file.Install_conf. section; files; package = _ } ->
-      List.map files ~f:(fun fb ->
-        let loc = File_binding.Expanded.src_loc fb in
-        let src = File_binding.Expanded.src fb in
-        let dst = Option.map ~f:Path.Local.to_string
-                    (File_binding.Expanded.dst fb) in
-        ( Some loc
-        , Install.Entry.make section src ?dst
-        )))
-
 (* The code below ([all_installs], [expand_stanza], [get_bin_install_entries] is largely
    duplicating the logic of install rules set up. This is done to avoid dependency
    cycles. (to learn the set of available binaries you need to compute all install
