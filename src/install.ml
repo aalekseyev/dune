@@ -171,12 +171,6 @@ module Section = struct
       in
       Path.L.relative section_path p
 
-    let install_path_for_bin p =
-      let dest_dir = Path.root in
-      let install_bin_dir = Path.relative dest_dir "bin" in
-      let section_path = install_bin_dir in
-      Path.relative section_path p
-
   end
 end
 
@@ -230,15 +224,6 @@ module Entry = struct
   let relative_installed_path t ~paths =
     Section.Paths.install_path paths t.section
       (relative_destination t)
-
-  let relative_installed_path_for_bin t =
-    match t.section with
-    | Bin ->
-      Section.Paths.install_path_for_bin (relative_destination t)
-    | _ ->
-      Exn.code_error
-        "relative_installed_path_for_bin called on something installed in a section \
-         other than Bin" []
 
   let add_install_prefix t ~paths ~prefix =
     let opam_will_install_in_this_dir = Section.Paths.get paths t.section in

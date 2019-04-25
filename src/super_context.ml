@@ -395,7 +395,7 @@ let create
       bin =
         Artifacts.Bin.create ~context
           ~local_bins:(
-            Install_rules0.get_bin_install_entries
+            Install_rules0.get_installed_binaries
               ~context
               ~expander:(fun ~dir ->
                 Expander.set_dir expander0 ~dir)

@@ -66,7 +66,6 @@ module Entry : sig
   val set_src : t -> Path.t -> t
 
   val relative_installed_path : t -> paths:Section.Paths.t -> Path.t
-  val relative_installed_path_for_bin : t -> Path.t
   val add_install_prefix : t -> paths:Section.Paths.t -> prefix:Path.t -> t
 end
 

@@ -1,46 +1,26 @@
 open! Stdune
 
-(* The code below ([all_installs], [expand_stanza], [get_bin_install_entries] is largely
-   duplicating the logic of install rules set up. This is done to avoid dependency
-   cycles. (to learn the set of available binaries you need to compute all install
-   rules, which make use of something that depends on those binaries) *)
-let get_bin_install_entries installs ~context =
-  List.concat_map installs
-    ~f:(fun { Dune_file.Install_conf. section; files; package = _ } ->
-      match section with
-      | Bin ->
-        List.map files ~f:(fun fb ->
-          let src = File_binding.Expanded.src fb in
-          let dst = Option.map ~f:Path.Local.to_string
-                      (File_binding.Expanded.dst fb) in
-          let install_dir = Config.local_install_dir ~context:context.Context.name in
-          Path.append install_dir (Install.Entry.relative_installed_path_for_bin
-                                     (Install.Entry.make section src ?dst))
-        )
-      | _ -> []
-    )
-  |> Path.Set.of_list
-
-let expand_stanza ~expander ~dir i =
-  let expander = expander ~dir in
-  let path_expander =
-    File_binding.Unexpanded.expand ~dir
-      ~f:(Expander.expand_str expander)
-  in
-  let open Dune_file in
-  let files = List.map ~f:path_expander i.Install_conf.files in
-  { i with files }
-
-let all_installs stanzas ~expander =
-  List.concat_map stanzas
-    ~f:(fun ({ Dir_with_dune. data = stanzas; ctx_dir = dir; _ }) ->
-      List.filter_map stanzas ~f:(fun stanza ->
-        match (stanza : Stanza.t) with
-        | Dune_file.Install install ->
-          Some (expand_stanza ~expander ~dir install)
-        | _ -> None))
-
-let get_bin_install_entries stanzas ~context ~expander =
-  get_bin_install_entries
-    ~context
-    (all_installs ~expander stanzas)
+let get_installed_binaries stanzas ~(context : Context.t) ~expander =
+  let install_dir = Config.local_install_bin_dir ~context:context.name in
+  Dir_with_dune.deep_fold stanzas ~init:Path.Set.empty ~f:(fun d stanza acc ->
+    match (stanza : Stanza.t) with
+    | Dune_file.Install { section = Bin; files; _ } ->
+      let expand_str = Expander.expand_str (expander ~dir:d.ctx_dir) in
+      List.fold_left files ~init:acc ~f:(fun acc fb ->
+        match
+          match File_binding.Unexpanded.expand_dst fb ~f:expand_str with
+          | None ->
+            Some
+              (File_binding.Unexpanded.expand_src fb ~dir:d.ctx_dir
+                 ~f:expand_str
+               |> Path.basename)
+          | Some p ->
+            if Path.Local.is_root (Path.Local.parent_exn p) then
+              Some (Path.Local.basename p)
+            else
+              None
+        with
+        | None -> acc
+        | Some basename ->
+          Path.Set.add acc (Path.relative install_dir basename))
+    | _ -> acc)
