@@ -1,6 +1,10 @@
 unreleased
 ----------
 
+- Restricted the set of variables available for expansion in the `dst` field
+  of `install` stanza to simplify implementation and avoid dependency
+  cycles. (#2073, @aalekseyev)
+
 - [menhir] call menhir from context root build_dir (#2067, @ejgallego,
   review by @diml, @rgrinberg)
 
