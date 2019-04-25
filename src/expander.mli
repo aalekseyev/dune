@@ -9,13 +9,9 @@
        can be filled for a full expansion.*)
 open Stdune
 
-type from_env
-type no_env
+type t
 
-type 'a t_gen
-type t = from_env t_gen
-
-val bindings : _ t_gen -> Pform.Map.t
+val bindings : t -> Pform.Map.t
 val scope : t -> Scope.t
 val dir : t -> Path.t
 
@@ -23,47 +19,41 @@ val make
   :  scope:Scope.t
   -> context:Context.t
   -> lib_artifacts:Artifacts.Public_libs.t
-  -> bin_artifacts_host:Artifacts.Bin.t
+  -> bin_artifacts_host:Artifacts.Bin.t option
   -> t
-
-val make_no_env
-  :  context:Context.t
-  -> lib_artifacts:Artifacts.Public_libs.t
-  -> no_env t_gen
 
 val set_env : t -> var:string -> value:string -> t
 
 val hide_env : t -> var:string -> t
 
-val set_dir : 'a t_gen -> dir:Path.t -> 'a t_gen
+val set_dir : t -> dir:Path.t -> t
 
 val set_scope : t -> scope:Scope.t -> t
 
 val set_bin_artifacts
   :  t
-  -> bin_artifacts_host:Artifacts.Bin.t
+  -> bin_artifacts_host:Artifacts.Bin.t option
   -> t
 
-val add_bindings : 'a t_gen -> bindings:Pform.Map.t -> 'a t_gen
+val add_bindings : t -> bindings:Pform.Map.t -> t
 
 val extend_env : t -> env:Env.t -> t
 
 val expand
-  : _ t_gen
+  :  t
   -> mode:'a String_with_vars.Mode.t
   -> template:String_with_vars.t
   -> 'a
 
-val expand_path : _ t_gen -> String_with_vars.t -> Path.t
+val expand_path : t -> String_with_vars.t -> Path.t
 
-val expand_str : _ t_gen -> String_with_vars.t -> string
+val expand_str : t -> String_with_vars.t -> string
 
-val resolve_binary :
-  t -> loc:Loc.t option -> prog:string -> (Path.t, Import.fail) Result.t
+val resolve_binary : t -> loc:Loc.t option -> prog:string -> (Path.t, Import.fail) Result.t
 
 module Option : sig
-  val expand_path : _ t_gen -> String_with_vars.t -> Path.t option
-  val expand_str : _ t_gen -> String_with_vars.t -> string option
+  val expand_path : t -> String_with_vars.t -> Path.t option
+  val expand_str : t -> String_with_vars.t -> string option
 end
 
 module Resolved_forms : sig
@@ -115,7 +105,7 @@ val add_ddeps_and_bindings
   -> deps_written_by_user:Path.t Bindings.t
   -> t
 
-val expand_var_exn : _ t_gen -> Value.t list option String_with_vars.expander
+val expand_var_exn : t -> Value.t list option String_with_vars.expander
 
 val expand_and_eval_set
   :  t
@@ -123,4 +113,4 @@ val expand_and_eval_set
   -> standard:(unit, string list) Build.t
   -> (unit, string list) Build.t
 
-val eval_blang : _ t_gen -> Blang.t -> bool
+val eval_blang : t -> Blang.t -> bool

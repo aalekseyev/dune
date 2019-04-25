@@ -88,6 +88,7 @@ module Env : sig
   val external_ : t -> dir:Path.t -> External_env.t
   val bin_artifacts_host : t -> dir:Path.t -> Artifacts.Bin.t
   val expander : t -> dir:Path.t -> Expander.t
+  val expander_for_artifacts : t -> context_expander:Expander.t -> dir:Path.t -> Expander.t
   val local_binaries : t -> dir:Path.t -> File_binding.Expanded.t list
 end = struct
 
@@ -172,7 +173,7 @@ end = struct
     let bin_artifacts_host = bin_artifacts_host t ~dir in
     Expander.set_bin_artifacts
       expander
-      ~bin_artifacts_host
+      ~bin_artifacts_host:(Some bin_artifacts_host)
 
   let ocaml_flags t ~dir =
     Env_node.ocaml_flags (get t ~dir)
@@ -404,9 +405,11 @@ let create
     } : Artifacts.Public_libs.t)
     in
     let expander0 =
-      Expander.make_no_env
+      Expander.make
+        ~scope:(Scope.DB.find_by_dir scopes context.build_dir)
         ~context
         ~lib_artifacts:public_libs
+        ~bin_artifacts_host:None
     in
     { Artifacts.public_libs;
       bin =
@@ -414,8 +417,10 @@ let create
           ~local_bins:(
             get_installed_binaries
               ~context
-              ~expander:(fun ~dir ->
-                Expander.set_dir expander0 ~dir)
+              ~expander:(
+                Env.expander_for_artifacts
+                  env_context
+                  ~context_expander:expander0)
               stanzas
           )
     }
@@ -430,7 +435,7 @@ let create
       ~scope:(Scope.DB.find_by_dir scopes context.build_dir)
       ~context
       ~lib_artifacts:artifacts.public_libs
-      ~bin_artifacts_host:artifacts_host.bin
+      ~bin_artifacts_host:(Some artifacts_host.bin)
   in
   let env_context = { Env_context.
     env;
