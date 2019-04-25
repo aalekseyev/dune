@@ -5,7 +5,7 @@ type t =
   ; hidden_env : Env.Var.Set.t
   ; env : Env.t
   ; lib_artifacts : Artifacts.Public_libs.t
-  ; bin_artifacts_host : Artifacts.Bin.t option
+  ; bin_artifacts_host : Artifacts.Bin.t
   ; ocaml_config : Value.t list String.Map.t Lazy.t
   ; bindings : Pform.Map.t
   ; scope : Scope.t
@@ -138,6 +138,20 @@ let expand_str t sw =
   expand t ~mode:Single ~template:sw
   |> Value.to_string ~dir:t.dir
 
+let expand_with_reduced_var_set ~(context : Context.t) =
+  let ocaml_config = lazy (make_ocaml_config context.ocaml_config) in
+  let bindings = Pform.Map.create ~context in
+  fun var syn ->
+    match Pform.Map.expand bindings var syn with
+    | None -> None
+    | Some (Var (Values l)) -> Some l
+    | Some (Macro (Ocaml_config, s)) ->
+      Some (expand_ocaml_config (Lazy.force ocaml_config) var s)
+    | Some _ ->
+      Errors.fail (String_with_vars.Var.loc var)
+        "%s isn't allowed in this position"
+        (String_with_vars.Var.describe var)
+
 module Resolved_forms = struct
   type t =
     { (* Failed resolutions *)
@@ -209,17 +223,10 @@ let cc_of_c_flags t (cc : (unit, string list) Build.t C.Kind.Dict.t) =
     Value.L.strings (t.c_compiler :: flags))
 
 let resolve_binary t ~loc ~prog =
-  match t.bin_artifacts_host with
-  | None ->
-    Error
-      { Import.fail = fun () ->
-          Errors.fail_opt loc
-            "@{<error>Error@}: Attempted to use a [bin] expansion in an install stanza." }
-  | Some bin_artifacts_host ->
-    match Artifacts.Bin.binary ~loc bin_artifacts_host prog with
-    | Ok path -> Ok path
-    | Error e ->
-      Error { Import.fail = fun () -> Action.Prog.Not_found.raise e }
+  match Artifacts.Bin.binary ~loc t.bin_artifacts_host prog with
+  | Ok path -> Ok path
+  | Error e ->
+    Error { Import.fail = fun () -> Action.Prog.Not_found.raise e }
 
 let expand_and_record acc ~map_exe ~dep_kind ~scope
       ~expansion_kind ~dir ~pform t expansion

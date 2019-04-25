@@ -19,7 +19,7 @@ val make
   :  scope:Scope.t
   -> context:Context.t
   -> lib_artifacts:Artifacts.Public_libs.t
-  -> bin_artifacts_host:Artifacts.Bin.t option
+  -> bin_artifacts_host:Artifacts.Bin.t
   -> t
 
 val set_env : t -> var:string -> value:string -> t
@@ -32,7 +32,7 @@ val set_scope : t -> scope:Scope.t -> t
 
 val set_bin_artifacts
   :  t
-  -> bin_artifacts_host:Artifacts.Bin.t option
+  -> bin_artifacts_host:Artifacts.Bin.t
   -> t
 
 val add_bindings : t -> bindings:Pform.Map.t -> t
@@ -49,7 +49,15 @@ val expand_path : t -> String_with_vars.t -> Path.t
 
 val expand_str : t -> String_with_vars.t -> string
 
-val resolve_binary : t -> loc:Loc.t option -> prog:string -> (Path.t, Import.fail) Result.t
+val resolve_binary
+  :  t
+  -> loc:Loc.t option
+  -> prog:string
+  -> (Path.t, Import.fail) Result.t
+
+val expand_with_reduced_var_set
+  :  context:Context.t
+  -> Value.t list option String_with_vars.expander
 
 module Option : sig
   val expand_path : t -> String_with_vars.t -> Path.t option

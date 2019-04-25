@@ -88,7 +88,6 @@ module Env : sig
   val external_ : t -> dir:Path.t -> External_env.t
   val bin_artifacts_host : t -> dir:Path.t -> Artifacts.Bin.t
   val expander : t -> dir:Path.t -> Expander.t
-  val expander_for_artifacts : t -> context_expander:Expander.t -> dir:Path.t -> Expander.t
   val local_binaries : t -> dir:Path.t -> File_binding.Expanded.t list
 end = struct
 
@@ -173,7 +172,7 @@ end = struct
     let bin_artifacts_host = bin_artifacts_host t ~dir in
     Expander.set_bin_artifacts
       expander
-      ~bin_artifacts_host:(Some bin_artifacts_host)
+      ~bin_artifacts_host
 
   let ocaml_flags t ~dir =
     Env_node.ocaml_flags (get t ~dir)
@@ -311,16 +310,20 @@ let resolve_program t ~dir ?hint ~loc bin =
   let bin_artifacts = Env.bin_artifacts_host t ~dir in
   Artifacts.Bin.binary ?hint ~loc bin_artifacts bin
 
-let get_installed_binaries stanzas ~(context : Context.t) ~expander =
+let get_installed_binaries stanzas ~(context : Context.t) =
   let install_dir = Config.local_install_bin_dir ~context:context.name in
+  let expander = Expander.expand_with_reduced_var_set ~context in
+  let expand_str ~dir sw =
+    String_with_vars.expand ~dir ~mode:Single ~f:expander sw
+    |> Value.to_string ~dir
+  in
   Dir_with_dune.deep_fold stanzas ~init:Path.Set.empty ~f:(fun d stanza acc ->
     match (stanza : Stanza.t) with
     | Dune_file.Install { section = Bin; files; _ } ->
-      let expand_str = Expander.expand_str (expander ~dir:d.ctx_dir) in
       List.fold_left files ~init:acc ~f:(fun acc fb ->
         let p =
           File_binding.Unexpanded.destination_relative_to_install_path
-            fb ~f:expand_str
+            fb ~f:(expand_str ~dir:d.ctx_dir)
         in
         if Path.Local.is_root (Path.Local.parent_exn p) then
           Path.Set.add acc (Path.append_local install_dir p)
@@ -404,23 +407,12 @@ let create
       public_libs
     } : Artifacts.Public_libs.t)
     in
-    let expander0 =
-      Expander.make
-        ~scope:(Scope.DB.find_by_dir scopes context.build_dir)
-        ~context
-        ~lib_artifacts:public_libs
-        ~bin_artifacts_host:None
-    in
     { Artifacts.public_libs;
       bin =
         Artifacts.Bin.create ~context
           ~local_bins:(
             get_installed_binaries
               ~context
-              ~expander:(
-                Env.expander_for_artifacts
-                  env_context
-                  ~context_expander:expander0)
               stanzas
           )
     }
@@ -435,7 +427,7 @@ let create
       ~scope:(Scope.DB.find_by_dir scopes context.build_dir)
       ~context
       ~lib_artifacts:artifacts.public_libs
-      ~bin_artifacts_host:(Some artifacts_host.bin)
+      ~bin_artifacts_host:artifacts_host.bin
   in
   let env_context = { Env_context.
     env;
