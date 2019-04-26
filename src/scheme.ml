@@ -5,21 +5,30 @@ open Scheme_intf
 module Path = struct
   type t = Path.t
 
+  let to_string = Path.to_string
   module Set = Path.Set
   module Map = Path.Map
   let explode = Path.explode_after_build_dir_exn
+  let of_parts parts = match parts with
+    | [] -> Path.build_dir
+    | _ ->
+      Path.relative Path.build_dir (String.concat ~sep:"/" parts)
 end
 
 module Gen' = struct
   include Gen
   module Evaluated = struct
     type 'rules t = {
-      by_child : 'rules t Memo.Lazy.t String.Map.t;
+      children : 'rules children Memo.Lazy.t;
       rules_here : 'rules Memo.Lazy.t;
+    }
+    and
+      'rules children = {
+      by_child : 'rules t String.Map.t;
+      on_demand : (string, 'rules t, (string -> 'rules t)) Memo.t option;
     }
   end
 end
-open Gen'
 
 module Make(Rules : sig
     type t
@@ -33,73 +42,159 @@ module Make(Rules : sig
     | Approximation of Dir_set.t * 'rules t_gen
     | Finite of 'rules Path.Map.t
     | Thunk of (unit -> 'rules t_gen)
+    | By_dir of (dir:Path.t -> 'rules)
 
   type t = Rules.t Gen.t
 
   module Evaluated = struct
-    type 'rules t_gen = 'rules Evaluated.t = {
-      by_child : 'rules t_gen Memo.Lazy.t String.Map.t;
+    type 'rules t_gen = 'rules Gen'.Evaluated.t = {
+      children : 'rules children Memo.Lazy.t;
       rules_here : 'rules Memo.Lazy.t;
     }
+    and
+      'rules children = 'rules Gen'.Evaluated.children = {
+      by_child : 'rules t_gen String.Map.t;
+      on_demand : (string, 'rules t_gen, (string -> 'rules t_gen)) Memo.t option;
+    }
+
     type t = Rules.t t_gen
 
-    let empty =
-      { by_child = String.Map.empty;
-        rules_here = Memo.Lazy.of_val Rules.empty;
+    let no_children =
+      Memo.Lazy.of_val {
+        by_child = String.Map.empty;
+        on_demand = None;
       }
 
-    let descend t dir =
-      match String.Map.find t.by_child dir with
-      | None -> empty
-      | Some res -> Memo.Lazy.force res
+    let empty =
+      { rules_here = Memo.Lazy.of_val Rules.empty;
+        children = no_children
+      }
+
+    let string_memo f =
+      Memo.create_opaque "string-memo" ~input:(module String) Sync f
+
+    let of_function =
+      let rec go f acc =
+        {
+          rules_here = Memo.lazy_ (fun () -> f (List.rev acc));
+          children = Memo.Lazy.of_val {
+            by_child = String.Map.empty;
+            on_demand = Some (string_memo (fun s -> go f (s :: acc)));
+          }
+        }
+      in
+      fun f -> go f []
 
     let rec union ~union_rules x y =
       {
-        by_child =
-          String.Map.union x.by_child y.by_child
-            ~f:(fun _key data1 data2 ->
-              Some (Memo.Lazy.map2 data1 data2 ~f:(fun x y -> union ~union_rules x y)));
         rules_here =
-          Memo.Lazy.map2 x.rules_here y.rules_here ~f:union_rules
+          Memo.Lazy.map2 x.rules_here y.rules_here ~f:union_rules;
+        children =
+          Memo.lazy_ (fun () ->
+            let x = Memo.Lazy.force x.children in
+            let y = Memo.Lazy.force y.children in
+            { by_child =
+                String.Map.union x.by_child y.by_child
+                  ~f:(fun _key x y ->
+                    Some (union ~union_rules x y));
+              on_demand = (match x.on_demand, y.on_demand with
+                | None, x | x, None -> x
+                | Some x, Some y ->
+                  Some (string_memo (fun s ->
+                    union ~union_rules
+                      (Memo.exec x s)
+                      (Memo.exec y s)
+                  )));
+            });
       }
 
     let union = union ~union_rules:Rules.union
 
-    let rec restrict (dirs : Dir_set.t) t : t =
+    let descend' children dir =
+      let scheme1 =
+        match String.Map.find children.by_child dir with
+        | None -> empty
+        | Some res -> res
+      in
+      let scheme2 =
+        match children.on_demand with
+        | None -> empty
+        | Some on_demand ->
+          Memo.exec on_demand dir
+      in
+      union scheme1 scheme2
+
+    let descend t dir =
+      let children = Memo.Lazy.force t.children in
+      descend' children dir
+    ;;
+
+    let of_lazy l =
+      { rules_here = Memo.Lazy.bind l ~f:(fun l -> l.rules_here);
+        children = Memo.Lazy.bind l ~f:(fun l -> l.children);
+      }
+
+    let lazy_ f = of_lazy (Memo.lazy_ f)
+
+    let rec restrict (dirs : Dir_set.t) t : _ t_gen =
       {
         rules_here =
           (if dirs.here then
-             Memo.Lazy.bind t ~f:(fun t -> t.rules_here)
+             t.rules_here
            else
              Memo.Lazy.of_val Rules.empty);
-        by_child =
-          (match Dir_set.Children.default dirs.children with
-           | true ->
-             (* This is forcing the lazy potentially too early if the directory the user
-                is interested in is not actually in the set.
-                We're not fully committed to supporting this case though, anyway. *)
-             String.Map.mapi (Memo.Lazy.force t).by_child
-               ~f:(fun dir v ->
-                 Memo.lazy_ (fun () ->
-                   restrict
-                     (Dir_set.descend dirs dir)
-                     v))
-           | false ->
-             String.Map.mapi (Dir_set.Children.exceptions dirs.children)
-               ~f:(fun dir v ->
-                 Memo.lazy_ (fun () ->
-                   restrict
-                     v
-                     (Memo.lazy_ (fun () -> descend (Memo.Lazy.force t) dir)))));
+        children = (
+          if Dir_set.is_empty (Dir_set.minus dirs Dir_set.just_the_root)
+          then
+            no_children
+          else
+            match Dir_set.Children.default dirs.children with
+            | true ->
+              Memo.Lazy.map t.children ~f:(fun children ->
+                (* This is forcing [t.children] potentially too early if the directory
+                   the user is interested in is not actually in the set [dirs].
+                   We're not particularly committed to supporting exceptions in that case
+                   though. *)
+                { by_child =
+                    String.Map.mapi children.by_child
+                      ~f:(fun dir v ->
+                        restrict
+                          (Dir_set.descend dirs dir)
+                          v);
+                  on_demand =
+                    match children.on_demand with
+                    | None -> None
+                    | Some on_demand ->
+                      Some (string_memo (fun dir ->
+                        restrict
+                          (Dir_set.descend dirs dir)
+                          (lazy_ (fun () ->
+                             Memo.exec on_demand dir
+                           ))
+                      ))
+                })
+            | false ->
+              Memo.Lazy.of_val
+                { on_demand = None;
+                  by_child =
+                    String.Map.mapi (Dir_set.Children.exceptions dirs.children)
+                      ~f:(fun dir v ->
+                        restrict
+                          v
+                          (lazy_ (fun () -> descend' (Memo.Lazy.force t.children) dir)));
+                })
       }
 
     let singleton path (rules : Rules.t) =
       let rec go = function
         | [] ->
-          { by_child = String.Map.empty; rules_here = Memo.Lazy.of_val rules; }
+          { children = no_children; rules_here = Memo.Lazy.of_val rules; }
         | x :: xs ->
           {
-            by_child = String.Map.singleton x (Memo.Lazy.of_val (go xs));
+            children = Memo.Lazy.of_val {
+              by_child = String.Map.singleton x (go xs);
+              on_demand = None;
+            };
             rules_here = Memo.Lazy.of_val Rules.empty;
           }
       in
@@ -131,9 +226,12 @@ module Make(Rules : sig
                  ])
       else
         let paths = Dir_set.intersect paths env in
-        Evaluated.restrict paths (Memo.lazy_ (fun () -> evaluate ~env:paths rules))
+        Evaluated.restrict paths
+          (Evaluated.of_lazy (Memo.lazy_ (fun () -> evaluate ~env:paths rules)))
     | Finite rules -> Evaluated.finite rules
     | Thunk f -> evaluate ~env (f ())
+    | By_dir f ->
+      Evaluated.of_function (fun dir -> f ~dir:(Path.of_parts dir))
 
   let all l = List.fold_left ~init:Empty ~f:(fun x y -> Union (x, y)) l
 
@@ -162,6 +260,8 @@ module Make(Rules : sig
            | Some rule -> rule)
         | Thunk f ->
           go (f ()) ~dir
+        | By_dir f ->
+          f ~dir
       in
       go
 
@@ -204,6 +304,11 @@ module Gen = struct
           Thunk (fun () ->
             print path "thunk";
             t ())
+        | By_dir f ->
+          By_dir (fun ~dir ->
+            print path (Printf.sprintf "by-dir:%s" (Path.to_string dir));
+            f ~dir
+          )
       in
       go ~path:[]
   end

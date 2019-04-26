@@ -119,6 +119,13 @@ val create
   -> 'f option
   -> ('i, 'o, 'f) t
 
+val create_opaque
+  :  string
+  -> input:(module Input with type t = 'i)
+  -> ('i, 'o, 'f) Function_type.t
+  -> 'f
+  -> ('i, 'o, 'f) t
+
 (** Set the implementation of a memoized function whose implementation was omitted
     when calling [create]. *)
 val set_impl : (_, _, 'f) t -> 'f -> unit
@@ -167,6 +174,7 @@ val function_info : string -> Function_info.t
 module Lazy : sig
   type 'a t
 
+  val map : 'a t -> f:('a -> 'b) -> 'b t
   val map2 : 'a t -> 'b t -> f:('a -> 'b -> 'c) -> 'c t
   val bind : 'a t -> f:('a -> 'b t) -> 'b t
 

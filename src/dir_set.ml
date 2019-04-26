@@ -177,8 +177,11 @@ let of_list list =
     | Subtree dir -> of_subtree_gen T.universal dir)
   |> union_all
 
+let minus x y =
+  (intersect x (negate y))
+
 let is_subset x ~of_ =
-  is_empty (intersect x (negate of_))
+  is_empty (minus x of_)
 
 let rec to_sexp t = match match_ t with
   | `Empty -> Sexp.Atom "Empty"

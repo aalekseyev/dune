@@ -7,6 +7,7 @@ module Gen = struct
     | Approximation of Dir_set.t * 'rules t
     | Finite of 'rules Path.Map.t
     | Thunk of (unit -> 'rules t)
+    | By_dir of (dir:Path.t -> 'rules)
 end
 
 module type S = sig
@@ -19,6 +20,7 @@ module type S = sig
     | Approximation of Dir_set.t * 'rules t_gen
     | Finite of 'rules Path.Map.t
     | Thunk of (unit -> 'rules t_gen)
+    | By_dir of (dir:Path.t -> 'rules)
 
   type t = dir_rules t_gen
 

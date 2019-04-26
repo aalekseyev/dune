@@ -698,6 +698,22 @@ end
 
 module Lazy_id = Stdune.Id.Make()
 
+let create_opaque (type a) name ~input typ f =
+  let module Output = struct
+    type t = a
+    let to_sexp _ = Sexp.Atom "<opaque>"
+    let equal = (==)
+  end
+  in
+  create
+    name
+    ~doc:("a memoized function")
+    ~input
+    ~visibility:Hidden
+    ~output:(Allow_cutoff (module Output))
+    typ
+    (Some f)
+
 let lazy_ (type a) f =
   let module Output = struct
     type t = a
@@ -724,6 +740,9 @@ module Lazy = struct
   let of_val x = fun () -> x
   let create f = lazy_ f
   let force f = f ()
+
+  let map x ~f =
+    create (fun () -> f (x ()))
 
   let map2 x y ~f =
     create (fun () -> f (x ()) (y ()))

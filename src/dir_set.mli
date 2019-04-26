@@ -27,7 +27,12 @@ end
 val empty : t
 val universal : t
 
+val is_empty : t -> bool
+val is_universal : t -> bool
+
 val mem : t -> Path.t -> bool
+
+val just_the_root : t
 
 val descend : t -> string -> t
 
@@ -47,5 +52,6 @@ val is_subset : t -> of_:t -> bool
 val union : t -> t -> t
 val intersect : t -> t -> t
 val negate : t -> t
+val minus : t -> t -> t
 
 val to_sexp : t -> Sexp.t
