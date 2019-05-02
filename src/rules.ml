@@ -88,6 +88,8 @@ module Dir_rules = struct
     let s t = Id.Set.of_list (Id.Map.keys t) in
     Id.Set.is_subset (s x) ~of_:(s of_))
 
+  let is_empty = Id.Map.is_empty
+
 end
 
 module T = struct

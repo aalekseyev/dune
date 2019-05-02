@@ -35,6 +35,8 @@ module Dir_rules : sig
 
   val is_subset : t -> of_:t -> bool
 
+  val is_empty : t -> bool
+
 end
 
 type t = private Dir_rules.t Path.Build.Map.t
