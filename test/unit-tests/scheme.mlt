@@ -1,7 +1,6 @@
 open Stdune
 
-let print =
-  In_expect_test.printf "%s\n"
+let print = Printf.printf "%s\n"
 
 module Directory_rules = struct
   type element =
