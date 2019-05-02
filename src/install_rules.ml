@@ -479,12 +479,13 @@ let memo =
          files_in_package;
          scheme = (
            Approximation (
-             (Dir_set.of_list
+             (Dir_set.union_all
                 [
-                  Subtree (Path.as_in_build_dir_exn (
+                  Dir_set.subtree (Path.as_in_build_dir_exn (
                     Config.local_install_dir ~context:context_name));
-                  One_dir (Path.as_in_build_dir_exn (Local_package.build_dir pkg));
-                  One_dir (Path.as_in_build_dir_exn ctx.build_dir)
+                  Dir_set.singleton
+                    (Path.as_in_build_dir_exn (Local_package.build_dir pkg));
+                  Dir_set.singleton (Path.as_in_build_dir_exn ctx.build_dir)
                 ])
              ,
              Thunk (fun () -> Scheme.Finite (
