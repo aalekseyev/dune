@@ -86,9 +86,11 @@ let print_rules scheme ~dir =
       print_log res1)
 [%%ignore]
 
+open Dune.Scheme
+
 let () =
   let scheme =
-    Dune.Scheme.Thunk (fun () -> Empty)
+    Dune.Scheme.Thunk (fun () -> Dune.Scheme.Empty)
   in
   print_rules scheme ~dir:(Path.of_string "foo/bar")
 
@@ -101,7 +103,8 @@ rules:
 
 let scheme_all_but_foo_bar =
   Dune.Scheme.Approximation (
-    Dir_set.negate (Dir_set.of_list [Subtree (Path.of_string "foo/bar")]),
+    Dir_set.negate (
+      Dir_set.of_list [Dir_set.Subtree (Path.of_string "foo/bar")]),
     Thunk (fun () -> Empty))
 
 [%%ignore]
