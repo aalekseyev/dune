@@ -6,6 +6,8 @@ open! Stdune
     be represented, only ones that can be efficiently inspected. *)
 type t
 
+val equal : t -> t -> bool
+
 (** [mem t p] is [true] if and only if [p] is in [t] *)
 val mem : t -> Path.Build.t -> bool
 

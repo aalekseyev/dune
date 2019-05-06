@@ -10,6 +10,17 @@ and nontrivial = {
   exceptions : t String.Map.t;
 }
 
+let rec equal a b =
+  match (a, b) with
+  | Empty, Empty -> true
+  | Empty, _ | _, Empty -> false
+  | Universal, Universal -> true
+  | Universal, _ | _, Universal -> false
+  | Nontrivial x, Nontrivial y ->
+    x.here = y.here &&
+    x.default = y.default &&
+    String.Map.equal ~equal x.exceptions y.exceptions
+
 let here = function
   | Empty -> false
   | Universal -> true

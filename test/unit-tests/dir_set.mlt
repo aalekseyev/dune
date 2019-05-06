@@ -1,0 +1,420 @@
+open Stdune
+
+module Dir_set = Dune.Dir_set
+
+module Naive = struct
+
+  type t = string list -> bool
+
+  let mem t p = t p
+
+  let here t = mem t []
+
+  let empty = (fun _ -> false)
+  let universal = (fun _ -> true)
+
+  let trivial b = fun _ -> b
+
+  let descend t s =
+    fun p -> t (s :: p)
+
+  let union x y = fun p -> x p || y p
+  let inter x y = fun p -> x p && y p
+
+  let singleton p = ((=) p)
+
+  let rec is_prefix prefix t = match (prefix, t) with
+    | [], _ -> true
+    | (_ :: _), [] -> false
+    | (p :: ps), (x :: xs) ->
+      if x = p then is_prefix ps xs
+      else false
+
+  let subtree p = is_prefix p
+
+  let diff a b = (fun p -> (a p) && not (b p))
+
+  let negate a = fun p -> not (a p)
+
+  let all_path_components = ["a"; "b"; "other"]
+
+  let all_paths =
+    let rec gen n =
+      [] ::
+      if n = 0 then []
+      else
+        List.concat_map all_path_components ~f:(fun x ->
+          List.map (gen (n - 1)) ~f:(fun rest -> x :: rest))
+    in
+    gen 3
+
+  let implies x y = not x || y
+
+  let for_all f = List.for_all all_paths ~f
+
+  let is_subset t ~of_ = for_all (fun p -> implies (t p) (of_ p))
+
+  let equal a b = for_all (fun p -> a p = b p)
+
+  let () = Random.init 893485
+
+  let gen_t =
+    let bool () = Random.bool () in
+    let rec t n =
+      let here = bool () in
+      let other = bool () in
+      let (a, b) =
+        if n = 0 then
+          (trivial other, trivial other)
+        else
+          (t (n - 1),
+           t (n - 1))
+      in
+      (fun p ->
+        (match p with
+         | [] -> here
+         | "a" :: rest -> a rest
+         | "b" :: rest -> b rest
+         | _ :: rest -> other)),
+      (
+        let root = Dir_set.singleton (mk_path []) in
+        let other_univ =
+          Dir_set.diff
+            Dir_set.universal
+            (Dir_set.union_all [
+               root;
+               Dir_set.subtree (mk_path ["a"]);
+               Dir_set.subtree (mk_path ["b"]);
+             ])
+        in
+        Dir_set.union_all [
+          if here then root else Dir_set.empty;
+          if other then other_univ else Dir_set.empty;
+          if
+        ]
+      )
+    in
+    fun () -> t 4
+
+  let to_bools t =
+    List.map all_paths ~f:t
+
+  let compare a b =
+    compare (to_bools a) (to_bools b)
+
+  let gen_sets n =
+    let res =
+      List.sort_uniq ~compare
+        (empty :: universal ::
+         List.init n ~f:(fun _ -> gen_t ()))
+    in
+    assert (List.length res > n / 2);
+    res
+
+end
+
+let mk_path l = Path.Build.of_string (String.concat ~sep:"/" l)
+
+let all_paths = Naive.all_paths
+
+let to_naive t = fun p -> Dir_set.mem t (mk_path p)
+
+let gen_sets = Naive.gen_sets
+
+type ('a, 'b) typ =
+  | Bool : (bool, bool) typ
+  | Path : (Path.Build.t, string list) typ
+  | T : (Dir_set.t, Naive.t) typ
+  | Comp : (string, string) typ
+
+type ('a1, 'a2) ftyp =
+  | Res : ('a1, 'a2) typ -> ('a1, 'a2) ftyp
+  | Arr :
+      ('a1, 'a2) typ * ('b1, 'b2) ftyp -> ('a1 -> 'b1, 'a2 -> 'b2) ftyp
+
+let gen :
+  type f1 f2. (f1, f2) typ -> (f1 * f2) list =
+  fun typ ->
+    match typ with
+    | Bool -> [(true, true); (false, false)]
+    | Path -> List.map all_paths ~f:(fun p -> (mk_path p, p))
+    | T -> List.map (gen_sets 100) ~f:(fun t -> (of_naive t, t))
+    | Comp -> List.map Naive.all_path_components ~f:(fun s -> (s, s))
+
+let show_input : type f1 f2. (f1, f2) typ -> f2 -> string =
+  fun typ t -> match typ with
+    | Bool -> Printf.sprintf "%b" t
+    | Path -> String.concat t ~sep:"/"
+    | T ->
+      String.concat ~sep:","
+        (List.map
+           (List.filter all_paths ~f:t) ~f:(fun p -> String.concat p ~sep:"/"))
+    | Comp -> t
+
+let rec test :
+  type f1 f2. (f1, f2) ftyp ->
+  context:(unit -> string list) -> f1 -> f2 -> unit =
+  fun typ ~context f1 f2 ->
+    match typ with
+    | Arr (t, rest) ->
+      List.iter (gen t) ~f:(fun (x1, x2) ->
+        let f1 = f1 x1 in
+        let f2 = f2 x2 in
+        test ~context:
+          (fun () ->
+             show_input t x2
+             :: context ())
+          rest f1 f2
+      )
+    | Res t ->
+      let raise s =
+        Exn.code_error s
+          ["context",
+           Sexp.List (List.map (context ()) ~f:(fun s -> Sexp.Atom s))]
+      in
+      match t with
+      | Bool ->
+        assert (f1 = f2)
+      | Path ->
+        raise "we never actually return paths"
+      | Comp ->
+        raise "we never actually return path components"
+      | T ->
+        if not (Naive.equal (to_naive f1) f2)
+        then
+          (List.iter all_paths ~f:(fun p ->
+             if Naive.mem (to_naive f1) p <> Naive.mem f2 p then
+               raise (
+                 Printf.sprintf "differ on path: %s" (String.concat p ~sep:"/")));
+           assert false)
+
+let test = test ~context:(fun _ -> [])
+
+let test2_bool f f_naive =
+  List.iter (gen_sets 100) ~f:(fun a ->
+    List.iter (gen_sets 100) ~f:(fun b ->
+      assert
+        (f (of_naive a) (of_naive b) = f_naive a b)
+    )
+  )
+
+let test1_path_bool f f_naive =
+  List.iter (gen_sets 1000) ~f:(fun a ->
+    List.iter Naive.all_paths ~f:(fun p ->
+      assert (f (of_naive a) (mk_path p) = f_naive a p)
+    )
+  )
+
+let test1_bool f f_naive =
+  List.iter (gen_sets 1000) ~f:(fun a ->
+    assert (f (of_naive a) = f_naive a)
+  )
+
+let test0_t t t_naive =
+  assert (Naive.equal (to_naive t) t_naive)
+
+let () =
+  test2_bool Dir_set.equal Naive.equal
+
+let () =
+  test1_path_bool
+    Dir_set.mem
+    Naive.mem
+
+let () =
+  test
+    (Arr (T, Res Bool))
+    Dir_set.here
+    Naive.here
+
+let () =
+  test
+    (Res T)
+    Dir_set.empty
+    Naive.empty
+
+let () =
+  test0_t
+    Dir_set.universal
+    Naive.universal
+
+let (^>) x r = Arr (x, r)
+
+let () =
+  test
+    (T ^> Comp ^> Res T)
+    Dir_set.descend
+    Naive.descend
+
+let () =
+  List.iter Naive.all_paths ~f:(fun p ->
+    test0_t (Dir_set.subtree (mk_path p)) (Naive.subtree p)
+  )
+
+let () =
+  test2_bool
+    (fun x y -> Dir_set.is_subset x ~of_:y)
+    (fun x y -> Naive.is_subset x ~of_:y)
+
+let () =
+  test2_t
+    Dir_set.union
+    Naive.union
+
+let () =
+  test2_t
+    Dir_set.inter
+    Naive.inter
+
+let () =
+  test2_t
+    Dir_set.diff
+    Naive.diff
+
+let () =
+  test1_t
+    Dir_set.negate
+    Naive.negate
+
+module Directory_rules = struct
+  type element =
+    | File of string
+    | Thunk of (unit -> t)
+  and
+    t = element Appendable_list.t
+
+  let empty = Appendable_list.empty
+  let union = Appendable_list.(@)
+  let concat t = List.fold_left t ~init:empty ~f:union
+  let thunk f = Appendable_list.singleton (Thunk f)
+  let file f = Appendable_list.singleton (File f)
+
+  let rec force l =
+    List.concat_map (Appendable_list.to_list l) ~f:(function
+      | File t -> [t]
+      | Thunk f ->
+        force (f ()))
+end
+
+module Scheme = struct
+  include Dune.Scheme.Gen.For_tests
+  include Dune.Scheme.Make(Directory_rules)
+end
+
+module Dir_set = Dune.Dir_set
+
+module Path = struct
+  include Path.Build
+
+  let of_string str = L.relative root (
+    match String.split str ~on:'/' with
+    | [""] -> []
+    | ["."] -> []
+    | other -> other)
+end
+
+[%%ignore]
+
+let record_calls scheme ~f =
+  let calls = ref [] in
+  let scheme =
+    Scheme.instrument ~print:(fun s -> calls := s :: !calls) scheme
+  in
+  let res = f scheme in
+  (Directory_rules.force res, !calls)
+
+let print_rules scheme ~dir =
+  let res1, calls1 =
+    record_calls scheme ~f:(Scheme.For_tests.collect_rules_simple ~dir)
+  in
+  let res2, calls2 =
+    record_calls scheme ~f:(fun scheme ->
+      Scheme.get_rules (Scheme.evaluate scheme) ~dir)
+  in
+  if not ((res1 : string list) = res2)
+  then
+    Exn.code_error
+      "Naive [collect_rules_simple] gives result inconsistent with [Scheme.evaluate]"
+      [
+        "res1", Sexp.List (List.map res1 ~f:(fun s -> Sexp.Atom s));
+        "res2", Sexp.List (List.map res2 ~f:(fun s -> Sexp.Atom s));
+      ]
+  else
+    (
+      let print_log log =
+        let log = match log with | [] -> ["<none>"] | x -> x in
+        List.iter log ~f:(fun s -> print ("    " ^ s))
+      in
+      (if not ((calls1 : string list) = calls2) then (
+         print "inconsistent laziness behavior:";
+         print "naive calls:";
+         print_log calls1;
+         print "[evalulate] calls:";
+         print_log calls2;)
+       else (
+         print "calls:";
+         print_log calls1
+       )
+      );
+      print "rules:";
+      print_log res1)
+[%%ignore]
+
+open Dune.Scheme
+
+let () =
+  let scheme =
+    Dune.Scheme.Thunk (fun () -> Dune.Scheme.Empty)
+  in
+  print_rules scheme ~dir:(Path.of_string "foo/bar")
+
+[%%expect{|
+calls:
+    thunk
+rules:
+    <none>
+|}]
+
+let scheme_all_but_foo_bar =
+  Dune.Scheme.Approximation (
+    Dir_set.negate (
+      Dir_set.subtree (Path.of_string "foo/bar")),
+    Thunk (fun () -> Empty))
+
+[%%ignore]
+
+let () =
+  print_rules scheme_all_but_foo_bar ~dir:(Path.of_string "unrelated/dir")
+
+[%%expect{|
+calls:
+    t:thunk
+rules:
+    <none>
+|}]
+
+let () =
+  print_rules scheme_all_but_foo_bar ~dir:(Path.of_string "foo/bar")
+
+[%%expect{|
+inconsistent laziness behavior:
+naive calls:
+    <none>
+[evalulate] calls:
+    t:thunk
+rules:
+    <none>
+|}]
+
+let () =
+  print_rules scheme_all_but_foo_bar ~dir:(Path.of_string "foo/bar/baz")
+
+[%%expect{|
+inconsistent laziness behavior:
+naive calls:
+    <none>
+[evalulate] calls:
+    t:thunk
+rules:
+    <none>
+|}]
