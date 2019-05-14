@@ -359,7 +359,6 @@ type t =
   ; gen_rules :
       (Context_or_install.t ->
        (dir:Path.t -> string list -> extra_sub_directories_to_keep) option) Fdecl.t
-  ; mutable load_dir_stack : Path.t list
   ; (* Set of directories under _build that have at least one rule and
        all their ancestors. *)
     mutable build_dirs_to_keep : Path.Set.t
@@ -1517,14 +1516,14 @@ end = struct
       | Some rule -> Rule.Set.add acc rule)
     |> Rule.Set.to_list
 
-  let entry_point t ~f =
-    (match t.load_dir_stack with
+  let entry_point _t ~f =
+    (match Memo.get_call_stack () with
      | [] ->
        ()
-     | stack ->
+     | _stack ->
+       (* CR aalekseyev: show stack! *)
        Exn.code_error
-         "Build_system.entry_point: called inside the rule generator callback"
-         ["stack", Sexp.Encoder.list Path.to_sexp stack]
+         "Build_system.entry_point: called inside a memoized function" []
     );
     f ()
 
@@ -1658,7 +1657,6 @@ let init ~contexts ~file_tree ~hook =
           ~input:(module Path)
           Sync
           None
-    ; load_dir_stack = []
     ; file_tree
     ; gen_rules = Fdecl.create ()
     ; init_rules = Fdecl.create ()
