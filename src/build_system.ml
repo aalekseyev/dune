@@ -446,29 +446,36 @@ let get_dir_status t ~dir =
     Option.iter res ~f:(Path.Table.add t.dirs dir);
     res
 
-let add_spec t fn rule =
+let add_spec_exn t fn rule =
   match Path.Table.find t.files fn with
   | None ->
     Path.Table.add t.files fn rule
-  | Some rule' ->
-    let describe (rule : Internal_rule.t) =
-      match rule.info with
-      | From_dune_file { start; _ } ->
-        start.pos_fname ^ ":" ^ string_of_int start.pos_lnum
-      | Internal -> "<internal location>"
-      | Source_file_copy -> "file present in source tree"
-    in
-    die "Multiple rules generated for %s:\n\
-         - %s\n\
-         - %s%s"
-      (Path.to_string_maybe_quoted fn)
-      (describe rule')
-      (describe rule)
-      (match rule.info, rule'.info with
-       | Source_file_copy, _ | _, Source_file_copy ->
-         "\nHint: rm -f " ^ Path.to_string_maybe_quoted
-                              (Path.drop_optional_build_context fn)
-       | _ -> "")
+  | Some _ ->
+    assert false
+
+let add_rules_exn t rules =
+  Path.Map.iteri rules ~f:(fun key data ->
+    add_spec_exn t key data)
+
+let rule_conflict fn rule' rule =
+  let describe (rule : Internal_rule.t) =
+    match rule.info with
+    | From_dune_file { start; _ } ->
+      start.pos_fname ^ ":" ^ string_of_int start.pos_lnum
+    | Internal -> "<internal location>"
+    | Source_file_copy -> "file present in source tree"
+  in
+  die "Multiple rules generated for %s:\n\
+       - %s\n\
+       - %s%s"
+    (Path.to_string_maybe_quoted fn)
+    (describe rule')
+    (describe rule)
+    (match rule.info, rule'.info with
+     | Source_file_copy, _ | _, Source_file_copy ->
+       "\nHint: rm -f " ^ Path.to_string_maybe_quoted
+                            (Path.drop_optional_build_context fn)
+     | _ -> "")
 
 (* This contains the targets of the actions that are being executed. On exit, we
    need to delete them as they might contain garbage *)
@@ -693,7 +700,7 @@ let rec compile_rule t pre_rule =
     ; rev_deps = []
     }
   in
-  Path.Set.iter targets ~f:(fun fn -> add_spec t fn rule)
+  (targets, rule)
 
 and static_deps t build =
   Fiber.Once.create (fun () ->
@@ -704,12 +711,21 @@ and static_deps t build =
 and start_rule t _rule =
   t.hook Rule_started
 
-and setup_copy_rules t ~ctx_dir ~non_target_source_files =
-  Path.Source.Set.iter non_target_source_files ~f:(fun path ->
-    let ctx_path = Path.append_source ctx_dir path in
-    let build = Build.copy ~src:(Path.source path) ~dst:ctx_path in
-    compile_rule t (Pre_rule.make build ~context:None ~env:None
-                      ~info:Source_file_copy))
+and create_copy_rules ~ctx_dir ~non_target_source_files =
+  List.map
+    (Path.Source.Set.to_list non_target_source_files)
+    ~f:(fun path ->
+      let ctx_path = Path.append_source ctx_dir path in
+      let build = Build.copy ~src:(Path.source path) ~dst:ctx_path in
+      (Pre_rule.make build ~context:None ~env:None
+         ~info:Source_file_copy))
+
+and compile_rules ~dir t rules =
+  List.map rules ~f:(compile_rule t)
+  |> List.concat_map ~f:(fun (targets, rule) ->
+    assert (Path.(=) dir rule.Internal_rule.dir);
+    List.map (Path.Set.to_list targets) ~f:(fun target -> (target, rule)))
+  |> Path.Map.of_list_reducei ~f:rule_conflict
 
 and load_dir   t ~dir = ignore (load_dir_and_get_targets t ~dir : Path.Set.t)
 and load_dir_and_produce_its_rules t ~dir =
@@ -789,7 +805,7 @@ and load_dir_step2_exn t ~dir =
   let collected = Rules.Dir_rules.consume rules in
 
   (* Compute alias rules *)
-  let alias_dir, alias_rules =
+  let alias_rules =
     match context_name with
     | Context context_name ->
       let alias_dir = Path.append_source (Path.relative alias_dir context_name) sub_dir in
@@ -865,9 +881,9 @@ and load_dir_step2_exn t ~dir =
         ~data:(Loaded {
           rules_produced = Rules.empty;
           targets = alias_stamp_files });
-      Some alias_dir, alias_rules
+      Some (alias_dir, alias_rules)
     | Install _ ->
-      None, []
+      None
   in
 
   let file_tree_dir =
@@ -1010,14 +1026,28 @@ The following targets are not:
      assert (Path.equal x dir));
 
   (* Compile the rules and cleanup stale artifacts *)
-  List.iter rules ~f:(compile_rule t);
-  Option.iter to_copy ~f:(fun (ctx_dir, source_files) ->
-    setup_copy_rules t ~ctx_dir ~non_target_source_files:source_files);
+  let rules =
+    (match to_copy with
+     | None -> []
+     | Some (ctx_dir, source_files) ->
+       create_copy_rules ~ctx_dir ~non_target_source_files:source_files
+    )
+    @ rules
+  in
+  let targets_here = compile_rules t ~dir rules in
+  add_rules_exn t targets_here;
+  assert (
+    Path.Set.equal targets (Path.Set.of_list (Path.Map.keys targets_here)));
+
   remove_old_artifacts t ~dir ~subdirs_to_keep;
 
-  List.iter alias_rules ~f:(compile_rule t);
-  Option.iter alias_dir ~f:(fun alias_dir ->
-    remove_old_artifacts t ~dir:alias_dir ~subdirs_to_keep);
+  (match alias_rules with
+   | None ->
+     ()
+   | Some (alias_dir, alias_rules) ->
+     let compiled = compile_rules t ~dir:alias_dir alias_rules in
+     add_rules_exn t compiled;
+     remove_old_artifacts t ~dir:alias_dir ~subdirs_to_keep);
 
   { rules_produced; targets }
 
