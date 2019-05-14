@@ -224,7 +224,7 @@ module Cached_value = struct
           match node.state with
           | Running_sync run ->
             if Run.is_current run then
-              Exn.code_error "dependency_cycle" []
+              Exn.code_error "dependency_cycle 1" []
             else
               true
           | Running_async _ ->
@@ -489,6 +489,17 @@ let create (type i) (type o) (type f)
   ; fdecl
   }
 
+let create_hidden (type output) name ~doc ~input typ impl =
+  let module O =
+  struct
+    type t = output
+    let to_sexp (_ : t) = Sexp.Atom "<opaque>"
+  end
+  in
+  create
+    ~output:(Simple (module O))
+    ~visibility:Hidden name ~doc ~input typ impl
+
 module Exec_sync = struct
     let compute t inp dep_node =
     (* define the function to update / double check intermediate result *)
@@ -536,7 +547,8 @@ module Exec_sync = struct
         if Run.is_current run then
           (* hopefully this branch should be unreachable and [add_rev_dep]
              reports a cycle above instead *)
-          Exn.code_error "dependency_cycle" []
+          Exn.code_error "dependency_cycle 2" [
+          ]
         else
           recompute t inp dep_node
       | Done cv ->

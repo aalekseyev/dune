@@ -257,15 +257,6 @@ module Dir_triage = struct
 
 end
 
-module Dir_status = struct
-
-  type t =
-    | Loading of [`Self | `Forwarded]
-    | Failed_to_load
-    | Loaded of Loaded.t
-
-end
-
 module Trace : sig
   module Entry : sig
     type t =
@@ -363,7 +354,7 @@ type t =
     files       : Internal_rule.t Path.Table.t
   ; contexts    : Context.t String.Map.t
   ; file_tree   : File_tree.t
-  ; dirs : Dir_status.t Path.Table.t
+  ; dirs : (Path.t, Loaded.t, (Path.t -> Loaded.t)) Memo.t
   ; init_rules : Rules.t Fdecl.t
   ; gen_rules :
       (Context_or_install.t ->
@@ -746,21 +737,14 @@ and targets_of t ~dir = match load_dir_and_get_rules_and_targets t ~dir with
   | Build { targets_here; _ } ->
     Path.Set.of_list (Path.Map.keys targets_here)
 
-and load_dir_and_get_rules_and_targets t ~dir : Loaded.t =
-  match Path.Table.find t.dirs dir with
-  | Some (Loading _why) ->
-    die "recursive dependency between directories:\n    %s"
-      (String.concat ~sep:"\n--> "
-         (List.map t.load_dir_stack ~f:Utils.describe_target))
-  | Some (Loaded res) -> res
-  | Some Failed_to_load -> raise Already_reported
-  | None ->
+and load_dir_and_get_rules_and_targets t ~dir =
+  Memo.exec t.dirs dir
+and
+  load_dir_and_get_rules_and_targets_impl t ~dir : Loaded.t =
     match get_dir_triage t ~dir with
     | Known l ->
-      Path.Table.add t.dirs dir (Loaded l);
       l
     | Forward dir' ->
-      Path.Table.add t.dirs dir (Loading `Forwarded);
       (match load_dir_and_get_rules_and_targets t ~dir:dir' with
        | Non_managed _ ->
          Exn.code_error "Can't forward to a non-managed dir" []
@@ -769,35 +753,16 @@ and load_dir_and_get_rules_and_targets t ~dir : Loaded.t =
          targets_of_forwarded_dirs;
          rules_produced
        } ->
-         let res =
-           Loaded.Build {
-             targets_here =
-               Option.value (Path.Map.find targets_of_forwarded_dirs dir)
-                 ~default:(Path.Map.empty);
-             targets_of_forwarded_dirs =
-               Path.Map.remove targets_of_forwarded_dirs dir;
-             rules_produced
-           }
-         in
-         Path.Table.add t.dirs dir (Loaded res);
-         res)
+         Loaded.Build {
+           targets_here =
+             Option.value (Path.Map.find targets_of_forwarded_dirs dir)
+               ~default:(Path.Map.empty);
+           targets_of_forwarded_dirs =
+             Path.Map.remove targets_of_forwarded_dirs dir;
+           rules_produced
+         })
     | Need_step2 ->
-      Path.Table.add t.dirs dir (Loading `Self);
-      t.load_dir_stack <- dir :: t.load_dir_stack;
-
-      try
-        load_dir_step2_exn t ~dir
-      with exn ->
-        (match Path.Table.find t.dirs dir with
-         | Some (Loaded _) -> ()
-         | _ ->
-           (match t.load_dir_stack with
-            | [] -> assert false
-            | x :: l ->
-              t.load_dir_stack <- l;
-              assert (Path.equal x dir)));
-        Path.Table.replace t.dirs ~key:dir ~data:Failed_to_load;
-        reraise exn
+      load_dir_step2_exn t ~dir
 
 and load_dir_step2_exn t ~dir =
   let context_name, sub_dir = match Utils.analyse_target dir with
@@ -911,12 +876,6 @@ and load_dir_step2_exn t ~dir =
             (Path.Set.of_list (Path.Map.keys compiled)));
         add_rules_exn t compiled;
         remove_old_artifacts t ~dir:alias_dir ~subdirs_to_keep;
-        Path.Table.replace t.dirs ~key:alias_dir
-          ~data:(Loaded (Build {
-            rules_produced = Rules.empty;
-            targets_here = compiled;
-            targets_of_forwarded_dirs = Path.Map.empty;
-          }));
         compiled)
       in
       Some (alias_dir, register)
@@ -1069,8 +1028,8 @@ The following targets are not:
      | Some (alias_dir, f) ->
        Some (alias_dir, f ~subdirs_to_keep))
   in
-
-  let res = Loaded.Build { rules_produced;
+  Loaded.Build {
+    rules_produced;
     targets_here;
     targets_of_forwarded_dirs =
       match alias_targets with
@@ -1078,17 +1037,7 @@ The following targets are not:
         Path.Map.empty
       | Some (k, v) ->
         Path.Map.singleton k v
-            }
-  in
-
-  (* Set the directory status to loaded *)
-  Path.Table.replace t.dirs ~key:dir ~data:(Loaded res);
-  (match t.load_dir_stack with
-   | [] -> assert false
-   | x :: l ->
-     t.load_dir_stack <- l;
-     assert (Path.equal x dir));
-    res
+  }
 
 let get_rule_other t fn =
   let dir = Path.parent_exn fn in
@@ -1465,24 +1414,6 @@ let do_build ~request =
         | _ as exn -> exn
       )))
 
-let init ~contexts ~file_tree ~hook =
-  let contexts =
-    List.map contexts ~f:(fun c -> (c.Context.name, c))
-    |> String.Map.of_list_exn
-  in
-  set
-    { contexts
-    ; files      = Path.Table.create 1024
-    ; packages   = Fdecl.create ()
-    ; dirs       = Path.Table.create 1024
-    ; load_dir_stack = []
-    ; file_tree
-    ; gen_rules = Fdecl.create ()
-    ; init_rules = Fdecl.create ()
-    ; build_dirs_to_keep = Path.Set.empty
-    ; hook
-    }
-
 module Rule = struct
   module Id = Internal_rule.Id
 
@@ -1710,3 +1641,32 @@ end
 include All_lib_deps
 
 let load_dir ~dir = load_dir_and_produce_its_rules (t ()) ~dir
+
+let init ~contexts ~file_tree ~hook =
+  let contexts =
+    List.map contexts ~f:(fun c -> (c.Context.name, c))
+    |> String.Map.of_list_exn
+  in
+  let t =
+    { contexts
+    ; files      = Path.Table.create 1024
+    ; packages   = Fdecl.create ()
+    ; dirs       =
+        Memo.create_hidden
+          "load-dir"
+          ~doc:"load dir"
+          ~input:(module Path)
+          Sync
+          None
+    ; load_dir_stack = []
+    ; file_tree
+    ; gen_rules = Fdecl.create ()
+    ; init_rules = Fdecl.create ()
+    ; build_dirs_to_keep = Path.Set.empty
+    ; hook
+    }
+  in
+  Memo.set_impl t.dirs
+    (fun dir -> load_dir_and_get_rules_and_targets_impl t ~dir);
+  set t
+
