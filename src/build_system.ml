@@ -761,29 +761,26 @@ and load_dir_and_get_rules_and_targets t ~dir : Loaded.t =
       l
     | Forward dir' ->
       Path.Table.add t.dirs dir (Loading `Forwarded);
-      load_dir t ~dir:dir';
-      (match Path.Table.find t.dirs dir' with
-       | Some (Loaded res) ->
-         let here =
-           match res with
-           | Non_managed _ ->
-             Exn.code_error "Can't forward to a non-managed dir" []
-           | Build {
-             targets_here = _;
-             targets_of_forwarded_dirs;
+      (match load_dir_and_get_rules_and_targets t ~dir:dir' with
+       | Non_managed _ ->
+         Exn.code_error "Can't forward to a non-managed dir" []
+       | Build {
+         targets_here = _;
+         targets_of_forwarded_dirs;
+         rules_produced
+       } ->
+         let res =
+           Loaded.Build {
+             targets_here =
+               Option.value (Path.Map.find targets_of_forwarded_dirs dir)
+                 ~default:(Path.Map.empty);
+             targets_of_forwarded_dirs =
+               Path.Map.remove targets_of_forwarded_dirs dir;
              rules_produced
-           } ->
-             Loaded.Build {
-               targets_here =
-                 Option.value (Path.Map.find targets_of_forwarded_dirs dir)
-                   ~default:(Path.Map.empty);
-               targets_of_forwarded_dirs =
-                 Path.Map.remove targets_of_forwarded_dirs dir;
-               rules_produced
-             }
+           }
          in
-         here
-       | _ -> assert false)
+         Path.Table.add t.dirs dir (Loaded res);
+         res)
     | Need_step2 ->
       Path.Table.add t.dirs dir (Loading `Self);
       t.load_dir_stack <- dir :: t.load_dir_stack;
