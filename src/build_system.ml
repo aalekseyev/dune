@@ -243,13 +243,22 @@ module Loaded = struct
   }
 end
 
+module Dir_triage = struct
+
+  type t =
+    | Known  of Loaded.t
+    | Forward of Path.t (* Load this directory first *)
+    | Need_step2
+
+end
+
 module Dir_status = struct
 
   type t =
-    | Collecting_rules
-    | Loaded  of Loaded.t
-    | Forward of Path.t (* Load this directory first       *)
+    | Loading of [`Self | `Forwarded]
     | Failed_to_load
+    | Loaded of Loaded.t
+
 end
 
 module Trace : sig
@@ -394,57 +403,50 @@ let set_rule_generators ~init ~gen_rules =
   Fdecl.set t.init_rules init_rules;
   Fdecl.set t.gen_rules gen_rules
 
-let get_dir_status t ~dir =
-  match Path.Table.find t.dirs dir with
-  | Some x -> Some x
+let non_managed targets : Loaded.t = {
+  rules_produced = Rules.empty;
+  targets;
+}
+
+let get_dir_triage t ~dir =
+  match Path.as_in_source_tree dir with
+  | Some dir ->
+    Dir_triage.Known (non_managed (
+      Path.Source.Set.to_list (File_tree.files_of t.file_tree dir)
+      |> List.map ~f:Path.source
+      |> Path.Set.of_list))
   | None ->
-    let res =
-      match Path.as_in_source_tree dir with
-      | Some dir ->
-        Some (Dir_status.Loaded {
+    if Path.equal dir Path.build_dir then
+      (* Not allowed to look here *)
+      Dir_triage.Known
+        ({ rules_produced = Rules.empty;
+           targets = Path.Set.empty;
+         })
+    else if not (Path.is_managed dir) then
+      Dir_triage.Known
+        (non_managed (
+           match Path.readdir_unsorted dir with
+           | Error Unix.ENOENT -> Path.Set.empty
+           | Error m ->
+             Errors.warn Loc.none
+               "Unable to read %s@.Reason: %s@."
+               (Path.to_string_maybe_quoted dir)
+               (Unix.error_message m);
+             Path.Set.empty
+           | Ok files ->
+             Path.Set.of_list (List.map files ~f:(Path.relative dir))))
+    else begin
+      let (ctx, sub_dir) = Path.extract_build_context_exn dir in
+      if ctx = ".aliases" then
+        Forward (Path.(append_source build_dir) sub_dir)
+      else if ctx <> "install" && not (String.Map.mem t.contexts ctx) then
+        Dir_triage.Known {
           rules_produced = Rules.empty;
-          targets =
-            (
-              Path.Source.Set.to_list (File_tree.files_of t.file_tree dir)
-              |> List.map ~f:Path.source
-              |> Path.Set.of_list);
-        })
-      | None ->
-        if Path.equal dir Path.build_dir then
-          (* Not allowed to look here *)
-          Some (Loaded
-            { rules_produced = Rules.empty;
-              targets = Path.Set.empty
-            })
-        else if not (Path.is_managed dir) then
-          Some (Loaded
-            { rules_produced = Rules.empty;
-              targets =
-                match Path.readdir_unsorted dir with
-                | Error Unix.ENOENT -> Path.Set.empty
-                | Error m ->
-                  Errors.warn Loc.none
-                    "Unable to read %s@.Reason: %s@."
-                    (Path.to_string_maybe_quoted dir)
-                    (Unix.error_message m);
-                  Path.Set.empty
-                | Ok files ->
-                  Path.Set.of_list (List.map files ~f:(Path.relative dir))
-            })
-        else begin
-          let (ctx, sub_dir) = Path.extract_build_context_exn dir in
-          if ctx = ".aliases" then
-            Some (Forward (Path.(append_source build_dir) sub_dir))
-          else if ctx <> "install" && not (String.Map.mem t.contexts ctx) then
-            Some (Loaded {
-              rules_produced = Rules.empty;
-              targets = Path.Set.empty; })
-          else
-            None
-        end
-    in
-    Option.iter res ~f:(Path.Table.add t.dirs dir);
-    res
+          targets = Path.Set.empty;
+        }
+      else
+        Need_step2
+    end
 
 let add_spec_exn t fn rule =
   match Path.Table.find t.files fn with
@@ -738,40 +740,41 @@ and load_dir_and_get_targets t ~dir =
   (load_dir_and_get_rules_and_targets t ~dir).Loaded.targets
 
 and load_dir_and_get_rules_and_targets t ~dir : Loaded.t =
-  match get_dir_status t ~dir with
-  | Some Failed_to_load -> raise Already_reported
-
-  | Some (Loaded res) -> res
-
-  | Some (Forward dir') ->
-    load_dir t ~dir:dir';
-    begin match get_dir_status t ~dir with
-    | Some (Loaded res) -> res
-    | _ -> assert false
-    end
-
-  | Some Collecting_rules ->
+  match Path.Table.find t.dirs dir with
+  | Some (Loading _why) ->
     die "recursive dependency between directories:\n    %s"
       (String.concat ~sep:"\n--> "
          (List.map t.load_dir_stack ~f:Utils.describe_target))
-
+  | Some (Loaded res) -> res
+  | Some Failed_to_load -> raise Already_reported
   | None ->
-    Path.Table.add t.dirs dir Collecting_rules;
-    t.load_dir_stack <- dir :: t.load_dir_stack;
-
-    try
-      load_dir_step2_exn t ~dir
-    with exn ->
+    match get_dir_triage t ~dir with
+    | Known l ->
+      Path.Table.add t.dirs dir (Loaded l);
+      l
+    | Forward dir' ->
+      Path.Table.add t.dirs dir (Loading `Forwarded);
+      load_dir t ~dir:dir';
       (match Path.Table.find t.dirs dir with
-       | Some (Loaded _) -> ()
-       | _ ->
-         (match t.load_dir_stack with
-          | [] -> assert false
-          | x :: l ->
-            t.load_dir_stack <- l;
-            assert (Path.equal x dir)));
-      Path.Table.replace t.dirs ~key:dir ~data:Failed_to_load;
-      reraise exn
+       | Some (Loaded res) -> res
+       | _ -> assert false)
+    | Need_step2 ->
+      Path.Table.add t.dirs dir (Loading `Self);
+      t.load_dir_stack <- dir :: t.load_dir_stack;
+
+      try
+        load_dir_step2_exn t ~dir
+      with exn ->
+        (match Path.Table.find t.dirs dir with
+         | Some (Loaded _) -> ()
+         | _ ->
+           (match t.load_dir_stack with
+            | [] -> assert false
+            | x :: l ->
+              t.load_dir_stack <- l;
+              assert (Path.equal x dir)));
+        Path.Table.replace t.dirs ~key:dir ~data:Failed_to_load;
+        reraise exn
 
 and load_dir_step2_exn t ~dir =
   let context_name, sub_dir = match Utils.analyse_target dir with
