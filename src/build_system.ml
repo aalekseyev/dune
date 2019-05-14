@@ -237,10 +237,15 @@ module Alias0 = struct
 end
 
 module Loaded = struct
-  type t = {
-    rules_produced : Rules.t;
-    targets : Path.Set.t;
-  }
+  type t =
+    | Non_managed of Path.Set.t
+    | Build of {
+        rules_produced : Rules.t;
+        targets_here : Internal_rule.t Path.Map.t;
+        (* dir -> file -> rule *)
+        targets_of_forwarded_dirs : Internal_rule.t Path.Map.t Path.Map.t;
+      }
+
 end
 
 module Dir_triage = struct
@@ -403,15 +408,10 @@ let set_rule_generators ~init ~gen_rules =
   Fdecl.set t.init_rules init_rules;
   Fdecl.set t.gen_rules gen_rules
 
-let non_managed targets : Loaded.t = {
-  rules_produced = Rules.empty;
-  targets;
-}
-
 let get_dir_triage t ~dir =
   match Path.as_in_source_tree dir with
   | Some dir ->
-    Dir_triage.Known (non_managed (
+    Dir_triage.Known (Non_managed (
       Path.Source.Set.to_list (File_tree.files_of t.file_tree dir)
       |> List.map ~f:Path.source
       |> Path.Set.of_list))
@@ -419,12 +419,14 @@ let get_dir_triage t ~dir =
     if Path.equal dir Path.build_dir then
       (* Not allowed to look here *)
       Dir_triage.Known
-        ({ rules_produced = Rules.empty;
-           targets = Path.Set.empty;
-         })
+        (Build
+           { rules_produced = Rules.empty;
+             targets_here = Path.Map.empty;
+             targets_of_forwarded_dirs = Path.Map.empty;
+           })
     else if not (Path.is_managed dir) then
       Dir_triage.Known
-        (non_managed (
+        (Non_managed (
            match Path.readdir_unsorted dir with
            | Error Unix.ENOENT -> Path.Set.empty
            | Error m ->
@@ -440,10 +442,11 @@ let get_dir_triage t ~dir =
       if ctx = ".aliases" then
         Forward (Path.(append_source build_dir) sub_dir)
       else if ctx <> "install" && not (String.Map.mem t.contexts ctx) then
-        Dir_triage.Known {
+        Dir_triage.Known (Build {
           rules_produced = Rules.empty;
-          targets = Path.Set.empty;
-        }
+          targets_here = Path.Map.empty;
+          targets_of_forwarded_dirs = Path.Map.empty;
+        })
       else
         Need_step2
     end
@@ -729,15 +732,19 @@ and compile_rules ~dir t rules =
     List.map (Path.Set.to_list targets) ~f:(fun target -> (target, rule)))
   |> Path.Map.of_list_reducei ~f:rule_conflict
 
-and load_dir   t ~dir = ignore (load_dir_and_get_targets t ~dir : Path.Set.t)
+and load_dir   t ~dir =
+  ignore (load_dir_and_get_rules_and_targets t ~dir : Loaded.t)
 and load_dir_and_produce_its_rules t ~dir =
   let loaded = load_dir_and_get_rules_and_targets t ~dir in
-  Rules.produce loaded.rules_produced
+  match loaded with
+  | Non_managed _ -> ()
+  | Build loaded ->
+    Rules.produce loaded.rules_produced
 
-and targets_of t ~dir =         load_dir_and_get_targets t ~dir
-
-and load_dir_and_get_targets t ~dir =
-  (load_dir_and_get_rules_and_targets t ~dir).Loaded.targets
+and targets_of t ~dir = match load_dir_and_get_rules_and_targets t ~dir with
+  | Non_managed targets -> targets
+  | Build { targets_here; _ } ->
+    Path.Set.of_list (Path.Map.keys targets_here)
 
 and load_dir_and_get_rules_and_targets t ~dir : Loaded.t =
   match Path.Table.find t.dirs dir with
@@ -755,8 +762,27 @@ and load_dir_and_get_rules_and_targets t ~dir : Loaded.t =
     | Forward dir' ->
       Path.Table.add t.dirs dir (Loading `Forwarded);
       load_dir t ~dir:dir';
-      (match Path.Table.find t.dirs dir with
-       | Some (Loaded res) -> res
+      (match Path.Table.find t.dirs dir' with
+       | Some (Loaded res) ->
+         let here =
+           match res with
+           | Non_managed _ ->
+             Exn.code_error "Can't forward to a non-managed dir" []
+           | Build {
+             targets_here = _;
+             targets_of_forwarded_dirs;
+             rules_produced
+           } ->
+             Loaded.Build {
+               targets_here =
+                 Option.value (Path.Map.find targets_of_forwarded_dirs dir)
+                   ~default:(Path.Map.empty);
+               targets_of_forwarded_dirs =
+                 Path.Map.remove targets_of_forwarded_dirs dir;
+               rules_produced
+             }
+         in
+         here
        | _ -> assert false)
     | Need_step2 ->
       Path.Table.add t.dirs dir (Loading `Self);
@@ -880,11 +906,23 @@ and load_dir_step2_exn t ~dir =
              :: rules,
              targets))
       in
-      Path.Table.replace t.dirs ~key:alias_dir
-        ~data:(Loaded {
-          rules_produced = Rules.empty;
-          targets = alias_stamp_files });
-      Some (alias_dir, alias_rules)
+      let register = (fun ~subdirs_to_keep ->
+        let compiled = compile_rules t ~dir:alias_dir alias_rules in
+        assert (
+          Path.Set.equal
+            alias_stamp_files
+            (Path.Set.of_list (Path.Map.keys compiled)));
+        add_rules_exn t compiled;
+        remove_old_artifacts t ~dir:alias_dir ~subdirs_to_keep;
+        Path.Table.replace t.dirs ~key:alias_dir
+          ~data:(Loaded (Build {
+            rules_produced = Rules.empty;
+            targets_here = compiled;
+            targets_of_forwarded_dirs = Path.Map.empty;
+          }));
+        compiled)
+      in
+      Some (alias_dir, register)
     | Install _ ->
       None
   in
@@ -1023,25 +1061,28 @@ The following targets are not:
   in
   let targets_here = compile_rules t ~dir rules in
 
-  let targets = Path.Set.of_list (Path.Map.keys targets_here) in
-
-  let res : Loaded.t =
-    {
-      rules_produced;
-      targets }
-  in
-
   add_rules_exn t targets_here;
 
   remove_old_artifacts t ~dir ~subdirs_to_keep;
 
-  (match alias_rules with
-   | None ->
-     ()
-   | Some (alias_dir, alias_rules) ->
-     let compiled = compile_rules t ~dir:alias_dir alias_rules in
-     add_rules_exn t compiled;
-     remove_old_artifacts t ~dir:alias_dir ~subdirs_to_keep);
+  let alias_targets =
+    (match alias_rules with
+     | None ->
+       None
+     | Some (alias_dir, f) ->
+       Some (alias_dir, f ~subdirs_to_keep))
+  in
+
+  let res = Loaded.Build { rules_produced;
+    targets_here;
+    targets_of_forwarded_dirs =
+      match alias_targets with
+      | None ->
+        Path.Map.empty
+      | Some (k, v) ->
+        Path.Map.singleton k v
+            }
+  in
 
   (* Set the directory status to loaded *)
   Path.Table.replace t.dirs ~key:dir ~data:(Loaded res);
@@ -1050,8 +1091,7 @@ The following targets are not:
    | x :: l ->
      t.load_dir_stack <- l;
      assert (Path.equal x dir));
-
-  res
+    res
 
 let get_rule_other t fn =
   let dir = Path.parent_exn fn in
