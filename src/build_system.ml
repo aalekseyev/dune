@@ -799,7 +799,7 @@ and load_dir_step2_exn t ~dir =
     match context_name with
     | Context context_name ->
       let alias_dir = Path.append_source (Path.relative alias_dir context_name) sub_dir in
-      let alias_rules, alias_stamp_files =
+      let alias_rules =
         let open Build.O in
         let aliases =
           collected.aliases
@@ -823,10 +823,10 @@ and load_dir_step2_exn t ~dir =
                   ; actions = Appendable_list.empty
                   }
         in
-        String.Map.foldi aliases ~init:([], Path.Set.empty)
+        String.Map.foldi aliases ~init:[]
           ~f:(fun name
                { Rules.Dir_rules.Alias_spec. deps; dyn_deps; actions }
-               (rules, alias_stamp_files) ->
+               rules ->
             let base_path = Path.relative alias_dir name in
             let rules, action_stamp_files =
               List.fold_left
@@ -848,10 +848,6 @@ and load_dir_step2_exn t ~dir =
             in
             let deps = Path.Set.union deps action_stamp_files in
             let path = Path.extend_basename base_path ~suffix:Alias0.suffix in
-            let targets =
-              Path.Set.add action_stamp_files path
-              |> Path.Set.union alias_stamp_files
-            in
             (Pre_rule.make
                ~context:None
                ~env:None
@@ -864,15 +860,10 @@ and load_dir_step2_exn t ~dir =
                     (Action.digest_files (Path.Set.to_list deps)))
                 >>>
                 Build.action_dyn () ~targets:[path])
-             :: rules,
-             targets))
+             :: rules))
       in
       let register = (fun ~subdirs_to_keep ->
         let compiled = compile_rules t ~dir:alias_dir alias_rules in
-        assert (
-          Path.Set.equal
-            alias_stamp_files
-            (Path.Set.of_list (Path.Map.keys compiled)));
         add_rules_exn t compiled;
         remove_old_artifacts t ~dir:alias_dir ~subdirs_to_keep;
         compiled)
