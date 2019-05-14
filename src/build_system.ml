@@ -1025,15 +1025,11 @@ The following targets are not:
 
   let targets = Path.Set.of_list (Path.Map.keys targets_here) in
 
-  (* Set the directory status to loaded *)
-  Path.Table.replace t.dirs ~key:dir ~data:(Loaded {
-    rules_produced;
-    targets });
-  (match t.load_dir_stack with
-   | [] -> assert false
-   | x :: l ->
-     t.load_dir_stack <- l;
-     assert (Path.equal x dir));
+  let res : Loaded.t =
+    {
+      rules_produced;
+      targets }
+  in
 
   add_rules_exn t targets_here;
 
@@ -1047,7 +1043,15 @@ The following targets are not:
      add_rules_exn t compiled;
      remove_old_artifacts t ~dir:alias_dir ~subdirs_to_keep);
 
-  { rules_produced; targets }
+  (* Set the directory status to loaded *)
+  Path.Table.replace t.dirs ~key:dir ~data:(Loaded res);
+  (match t.load_dir_stack with
+   | [] -> assert false
+   | x :: l ->
+     t.load_dir_stack <- l;
+     assert (Path.equal x dir));
+
+  res
 
 let get_rule_other t fn =
   let dir = Path.parent_exn fn in
