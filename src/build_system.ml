@@ -900,11 +900,10 @@ and load_dir_step2_exn t ~dir =
 
   (* Compute the set of targets and the set of source files that must
      not be copied *)
-  let user_rule_targets, source_files_to_ignore =
-    List.fold_left rules ~init:(Path.Set.empty, Path.Set.empty)
-      ~f:(fun (acc_targets, acc_ignored) { Pre_rule.targets; mode; _ } ->
-        (Path.Set.union targets acc_targets,
-         match mode with
+  let source_files_to_ignore =
+    List.fold_left rules ~init:(Path.Set.empty)
+      ~f:(fun (acc_ignored) { Pre_rule.targets; mode; _ } ->
+        (match mode with
          | Promote { only = None; _ } | Ignore_source_files ->
            Path.Set.union targets acc_ignored
          | Promote { only = Some pred; _ } ->
@@ -923,11 +922,10 @@ and load_dir_step2_exn t ~dir =
     |> Path.Source.Set.of_list
   in
   (* Take into account the source files *)
-  let targets, to_copy, subdirs_to_keep =
+  let to_copy, subdirs_to_keep =
     match context_name with
     | Install _ ->
-      (user_rule_targets,
-       None,
+      (None,
        String.Set.empty)
     | Context context_name ->
       (* This condition is [true] because of [get_dir_status] *)
@@ -941,15 +939,10 @@ and load_dir_step2_exn t ~dir =
       in
       let files = Path.Source.Set.diff files source_files_to_ignore in
       if Path.Source.Set.is_empty files then
-        (user_rule_targets, None, subdirs)
+        (None, subdirs)
       else
         let ctx_path = Path.(relative build_dir) context_name in
-        (Path.Set.union user_rule_targets
-           (Path.Source.Set.to_list files
-            |> List.map ~f:(Path.append_source ctx_path)
-            |> Path.Set.of_list
-           ),
-         Some (ctx_path, files),
+        (Some (ctx_path, files),
          subdirs)
   in
   let subdirs_to_keep =
@@ -1015,15 +1008,6 @@ The following targets are not:
           end)
   in
 
-  (* Set the directory status to loaded *)
-  Path.Table.replace t.dirs ~key:dir ~data:(Loaded {
-    rules_produced;
-    targets });
-  (match t.load_dir_stack with
-   | [] -> assert false
-   | x :: l ->
-     t.load_dir_stack <- l;
-     assert (Path.equal x dir));
 
   (* Compile the rules and cleanup stale artifacts *)
   let rules =
@@ -1035,9 +1019,20 @@ The following targets are not:
     @ rules
   in
   let targets_here = compile_rules t ~dir rules in
+
+  let targets = Path.Set.of_list (Path.Map.keys targets_here) in
+
+  (* Set the directory status to loaded *)
+  Path.Table.replace t.dirs ~key:dir ~data:(Loaded {
+    rules_produced;
+    targets });
+  (match t.load_dir_stack with
+   | [] -> assert false
+   | x :: l ->
+     t.load_dir_stack <- l;
+     assert (Path.equal x dir));
+
   add_rules_exn t targets_here;
-  assert (
-    Path.Set.equal targets (Path.Set.of_list (Path.Map.keys targets_here)));
 
   remove_old_artifacts t ~dir ~subdirs_to_keep;
 
