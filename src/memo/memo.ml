@@ -611,6 +611,10 @@ module Exec_async = struct
     let deps =
       get_deps_from_graph_exn dep_node
     in
+    (* CR-someday aalekseyev:
+       Set [dep_node.state] to [Failed] if there are errors file running [f].
+       Currently not doing that because sometimes [f] both returns a
+       result and keeps producing errors. Not sure why. *)
     dep_node.state <- Done (Cached_value.create res ~deps);
     (* fill the ivar for any waiting threads *)
     Fiber.Ivar.fill ivar res >>= fun () ->
