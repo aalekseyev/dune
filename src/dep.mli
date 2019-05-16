@@ -1,16 +1,29 @@
 open Stdune
 
-type source_subtree_target_handling =
-  | Allow
-  | Disallow
-  | Hide
+(** This specifies which targets the source-tree-dependent action *)
+module Source_tree_target_handling : sig
+  type t = {
+    if_promoted: [`allow | `disallow | `hide];
+    if_not_promoted: [ `allow | `disallow | `hide ];
+  }
+
+  {
+    if_promoted: `allow;
+    if_not_promoted: `disallow;
+  }
+
+  {
+    if_promoted: `allow;
+    if_not_promoted: `allow;
+  }
+end
 
 type t = private
   | Env of Env.Var.t
   | File of Path.t
   | Alias of Alias.t
   | Glob of File_selector.t
-  (* [Source_subtree (p, targets)] means that the action expects to find the
+  (* [Source_tree (p, targets)] means that the action expects to find the
      directory [p] to be fully up to date and clean of stale artifacts and
      transient files.
 
@@ -22,12 +35,14 @@ type t = private
      [Hide] makes it so that the action won't even see the extra targets.
      (requires sandboxing)
   *)
-  | Source_subtree of (Path.t * source_subtree_target_handling)
+  | Source_tree of (Path.t * Source_tree_target_handling.t)
   | Universe
 
 val file : Path.t -> t
 val env : Env.Var.t -> t
 val universe : t
+val source_tree :
+  dir:Path.t -> target_handling:Source_tree_target_handling.t -> t
 val glob : File_selector.t -> t
 val alias : Alias.t -> t
 

@@ -4,12 +4,22 @@ module Trace = struct
   type t = (string * Digest.t) list
 end
 
+module Source_tree_target_handling = struct
+  type t =
+    | Allow
+    | Disallow
+    | Hide
+
+  let compare = compare
+end
+
 module T = struct
   type t =
     | Env of Env.Var.t
     | File of Path.t
     | Alias of Alias.t
     | Glob of File_selector.t
+    | Source_tree of (Path.t * Source_tree_target_handling.t)
     | Universe
 
   let env e = Env e
@@ -32,6 +42,12 @@ module T = struct
     | Glob x, Glob y -> File_selector.compare x y
     | Glob _, _ -> Lt
     | _, Glob _ -> Gt
+    | Source_tree (p1, h1), Source_tree (p2, h2) ->
+      Tuple.T2.compare
+        Path.compare Source_tree_target_handling.compare
+        (p1, h1) (p2, h2)
+    | Source_tree _, _ -> Lt
+    | _, Source_tree _ -> Gt
     | Universe, Universe -> Ordering.Eq
 
   let unset = lazy (Digest.string "unset")
