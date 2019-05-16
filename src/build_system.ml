@@ -1103,6 +1103,16 @@ let execute_rule = Memo.exec execute_rule_def
 
 let build_pred g = Memo.exec Pred.build_def g
 
+let build_subtree ~target_handling ~dir =
+  load_dir ~dir
+  >>| function
+  | Non_build _ -> assert false
+  | Build {
+    targets_here;
+    _
+  } ->
+    match target_handling,
+
 let build_deps =
   Dep.Set.parallel_iter ~f:(function
     | Alias a -> build_file (Alias.stamp_file a)
