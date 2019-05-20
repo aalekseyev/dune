@@ -429,37 +429,41 @@ let set_rule_generators ~init ~gen_rules =
   Fdecl.set t.init_rules init_rules;
   Fdecl.set t.gen_rules gen_rules
 
-let get_dir_triage t ~dir =
-  match Path.as_in_source_tree dir with
-  | Some dir ->
+let get_dir_triage t ~(dir : Path.t) =
+  let no_rules = Dir_triage.Known Loaded.no_rules in
+  match dir with
+  | In_source_tree dir ->
     Dir_triage.Known (Non_build (
       Path.set_of_source_paths (File_tree.files_of t.file_tree dir)))
-  | None ->
-    if Path.equal dir Path.build_dir then
-      (* Not allowed to look here *)
-      Dir_triage.Known Loaded.no_rules
-    else if not (Path.is_managed dir) then
-      Dir_triage.Known
-        (Non_build (
-           match Path.readdir_unsorted dir with
-           | Error Unix.ENOENT -> Path.Set.empty
-           | Error m ->
-             Errors.warn Loc.none
-               "Unable to read %s@.Reason: %s@."
-               (Path.to_string_maybe_quoted dir)
-               (Unix.error_message m);
-             Path.Set.empty
-           | Ok filenames ->
-             Path.Set.of_listing ~dir ~filenames))
-    else begin
-      let (ctx, sub_dir) = Path.extract_build_context_exn dir in
-      if ctx = ".aliases" then
-        Alias_dir_of (Path.Build.(append_source root) sub_dir)
-      else if ctx <> "install" && not (String.Map.mem t.contexts ctx) then
-        Dir_triage.Known Loaded.no_rules
+  | External _ ->
+    Dir_triage.Known
+      (Non_build (
+         match Path.readdir_unsorted dir with
+         | Error Unix.ENOENT -> Path.Set.empty
+         | Error m ->
+           Errors.warn Loc.none
+             "Unable to read %s@.Reason: %s@."
+             (Path.to_string_maybe_quoted dir)
+             (Unix.error_message m);
+           Path.Set.empty
+         | Ok filenames ->
+           Path.Set.of_listing ~dir ~filenames))
+  | In_build_dir dir ->
+    match Utils.analyse_target dir with
+      (Alias (ctx, path)) ->
+      if String.Map.mem t.contexts ctx
+      then
+        Alias_dir_of (
+          Path.Build.(append_source (relative root ctx))
+            (Utils.Alias_path.as_dir path))
       else
-        Need_step2
-    end
+        no_rules
+    | (Install (ctx, _)) | (Regular (ctx, _)) ->
+      if String.Map.mem t.contexts ctx then Need_step2
+      else no_rules
+    | (Other _) ->
+      (* e.g. the build directory itself, the _build/install directory *)
+      no_rules
 
 let add_spec_exn t fn rule =
   match Path.Build.Table.find t.files fn with
@@ -592,7 +596,8 @@ let no_rule_found =
       if String.Map.mem t.contexts ctx then
         fail fn ~loc
       else
-        let fn = Path.append_source (Path.relative Path.build_dir ctx) fn' in
+        let fn = Path.append_source (Path.relative Path.build_dir ctx) (
+          Utils.Alias_path.as_target_exn fn') in
         die "Trying to build alias %s but build context %s doesn't exist.%s"
           (Path.to_string_maybe_quoted fn)
           ctx

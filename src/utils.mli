@@ -38,9 +38,21 @@ val executable_object_directory
   -> string
   -> Path.Build.t
 
+
+(** A path in alias build dir can be a directory or a buildable file (target).
+    When it's a directory, the full path is meaningful.
+    When it's a target, only the part before the last dash is meaningful. *)
+module Alias_path : sig
+  type t
+
+  val as_dir : t -> Path.Source.t
+  
+  val as_target_exn : t -> Path.Source.t
+end
+
 type target_kind =
   | Regular of string (* build context *) * Path.Source.t
-  | Alias   of string (* build context *) * Path.Source.t
+  | Alias   of string (* build context *) * Alias_path.t
   | Install of string (* build context *) * Path.Source.t
   | Other of Path.Build.t
 

@@ -65,9 +65,35 @@ let signal_name =
     | None -> sprintf "%d\n" n
     | Some s -> s
 
+module Alias_path = struct
+  type t = Path.Local.t
+  let as_dir t = Path.Source.of_local t
+  let as_target_exn fn =
+    if Path.Local.is_root fn then
+      Errors.code_error "Alias_path.as_target_exn called on weird path" [
+        "path", Path.Local.to_sexp fn
+      ]
+    else
+      let basename =
+        match String.rsplit2 (Path.Local.basename fn) ~on:'-' with
+        | None ->
+          Errors.code_error "Alias_path.as_target_exn called on weird path" [
+            "path", Path.Local.to_sexp fn
+          ]
+        | Some (name, digest) ->
+          assert (String.length digest = 32);
+          name
+      in
+      Path.Source.relative
+        (Path.Source.of_local (Path.Local.parent_exn fn))
+        basename
+
+  let of_local t = t
+end
+
 type target_kind =
   | Regular of string * Path.Source.t
-  | Alias   of string * Path.Source.t
+  | Alias   of string * Alias_path.t
   | Install of string * Path.Source.t
   | Other of Path.Build.t
 
@@ -76,26 +102,13 @@ type path_kind =
   | External of Path.External.t
   | Build of target_kind
 
-let analyse_target (fn as original_fn) : target_kind =
+let analyse_target fn : target_kind =
   match Path.Build.extract_first_component fn with
   | Some (".aliases", sub) ->
     (match Path.Local.split_first_component sub with
      | None -> Other fn
      | Some (ctx, fn) ->
-       if Path.Local.is_root fn then
-         Other original_fn
-       else
-         let basename =
-           match String.rsplit2 (Path.Local.basename fn) ~on:'-' with
-           | None -> assert false
-           | Some (name, digest) ->
-             assert (String.length digest = 32);
-             name
-         in
-         Alias (ctx,
-                Path.Source.relative
-                  (Path.Source.of_local (Path.Local.parent_exn fn))
-                  basename))
+       Alias (ctx, Alias_path.of_local fn))
   | Some ("install", sub) ->
     (match Path.Local.split_first_component sub with
      | None -> Other fn
@@ -118,7 +131,9 @@ let describe_target fn =
   in
   match analyse_target fn with
   | Alias (ctx, p) ->
-    sprintf "alias %s%s" (Path.Source.to_string_maybe_quoted p) (ctx_suffix ctx)
+    sprintf "alias %s%s"
+      (Path.Source.to_string_maybe_quoted (Alias_path.as_target_exn p))
+      (ctx_suffix ctx)
   | Install (ctx, p) ->
     sprintf "install %s%s" (Path.Source.to_string_maybe_quoted p) (ctx_suffix ctx)
   | Regular (ctx, fn) ->

@@ -201,7 +201,8 @@ module Fancy = struct
           | Regular (ctx, filename) ->
             split_paths (Path.Source.to_string filename :: targets_acc)
               (add_ctx ctx ctxs_acc) rest
-          | Alias (ctx, name) ->
+          | Alias (ctx, alias_path) ->
+            let name = Utils.Alias_path.as_target_exn alias_path in
             split_paths (("alias " ^ Path.Source.to_string name) :: targets_acc)
               (add_ctx ctx ctxs_acc) rest
           | Install (ctx, name) ->
