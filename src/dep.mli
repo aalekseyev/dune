@@ -2,20 +2,10 @@ open Stdune
 
 (** This specifies which targets the source-tree-dependent action *)
 module Source_tree_target_handling : sig
-  type t = {
-    if_promoted: [`allow | `disallow | `hide];
-    if_not_promoted: [ `allow | `disallow | `hide ];
-  }
-
-  {
-    if_promoted: `allow;
-    if_not_promoted: `disallow;
-  }
-
-  {
-    if_promoted: `allow;
-    if_not_promoted: `allow;
-  }
+  type t =
+    | Forbid_targets
+    | Only_see_promoted_targets
+    | Allow_any_targets
 end
 
 type t = private

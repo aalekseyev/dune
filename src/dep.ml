@@ -4,13 +4,11 @@ module Trace = struct
   type t = (string * Digest.t) list
 end
 
-module Source_tree_target_handling = struct
+module Source_tree_target_handling : sig
   type t =
-    | Allow
-    | Disallow
+    | Forbid
     | Hide
-
-  let compare = compare
+    | Allow
 end
 
 module T = struct
