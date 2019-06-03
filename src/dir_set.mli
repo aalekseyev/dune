@@ -69,3 +69,9 @@ val diff : t -> t -> t
 val negate : t -> t
 
 val to_sexp : t -> Sexp.t
+
+val toplevel_subdirs : t -> [`Infinite  | `Finite of String.Set.t]
+
+val of_list : Path.Relative.t list -> t
+
+val just_the_root : t
