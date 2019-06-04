@@ -130,21 +130,22 @@ module DB = struct
           end
 
   let make file_tree ~stanzas_per_dir =
+    let fn, set_fn_impl =
+      Memo.create_fdecl
+        "get-dir-status"
+        ~input:(module Path.Build)
+        ~visibility:Hidden
+        ~output:(Simple (module T))
+        ~doc:"Get a directory status."
+        Sync
+    in
     let t =
       { file_tree
       ; stanzas_per_dir
-      ; fn =
-          Memo.create
-            "get-dir-status"
-            ~input:(module Path.Build)
-            ~visibility:Hidden
-            ~output:(Simple (module T))
-            ~doc:"Get a directory status."
-            Sync
-            None
+      ; fn
       }
     in
-    Memo.set_impl t.fn (fun dir -> get t ~dir);
+    set_fn_impl (fun dir -> get t ~dir);
     t
 
   let get db ~dir =

@@ -2,6 +2,15 @@ open !Stdune
 
 type ('input, 'output, 'fdecl) t
 
+module Fdecl : sig
+
+  type non
+
+  type ('input, 'output, 'fdecl) t
+
+  val
+end
+
 val on_already_reported :
   (Exn_with_backtrace.t -> Nothing.t) -> unit
 
@@ -122,7 +131,7 @@ val create
   -> 'f option
   -> ('i, 'o, 'f) t
 
-val create_fdecl
+val memo_fdecl
   :  string
   -> doc:string
   -> input:(module Input with type t = 'i)
@@ -130,6 +139,15 @@ val create_fdecl
   -> output:('o Output.t)
   -> ('i, 'o, 'f) Function_type.t
   -> 'f * ('f -> unit)
+
+val create_fdecl
+  :  string
+  -> doc:string
+  -> input:(module Input with type t = 'i)
+  -> visibility:'i Visibility.t
+  -> output:('o Output.t)
+  -> ('i, 'o, 'f) Function_type.t
+  -> ('i, 'o, 'f) t * ('f -> unit)
 
 val create_hidden
   :  string

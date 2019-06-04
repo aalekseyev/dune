@@ -1120,8 +1120,8 @@ let all_targets () =
              @ Path.Build.Map.keys targets_here)
       ))
 
-let build_file_def =
-  Memo.create
+let build_file, set_build_file_impl =
+  Memo.memo_fdecl
     "build-file"
     ~output:(Allow_cutoff (module Unit))
     ~doc:"Build a file."
@@ -1130,21 +1130,18 @@ let build_file_def =
     Async
     None
 
-let build_file = Memo.exec build_file_def
-
-let execute_rule_def =
-  Memo.create
+let execute_rule, set_execute_rule_impl =
+  Memo.create_fdecl
     "execute-rule"
     ~output:(Allow_cutoff (module Unit))
     ~doc:"-"
     ~input:(module Internal_rule)
     ~visibility:Hidden
     Async
-    None
 
 module Pred = struct
-  let eval_def =
-    Memo.create "eval-pred"
+  let eval, set_eval_impl =
+    Memo.memo_fdecl "eval-pred"
       ~doc:"Evaluate a predicate in a directory"
       ~input:(module File_selector)
       ~output:(Allow_cutoff (module Path.Set))
@@ -1152,21 +1149,18 @@ module Pred = struct
       Sync
       None
 
-  let build_def =
-    Memo.create "build-pred"
+  let build, set_build_impl =
+    Memo.memo_fdecl "build-pred"
       ~doc:"build a predicate"
       ~input:(module File_selector)
       ~output:(Allow_cutoff (module Unit))
       ~visibility:Hidden
       Async
-      None
 end
 
-let eval_pred g = Memo.exec Pred.eval_def g
+let eval_pred = Pred.eval
 
-let execute_rule = Memo.exec execute_rule_def
-
-let build_pred g = Memo.exec Pred.build_def g
+let build_pred = Pred.build
 
 let build_deps =
   Dep.Set.parallel_iter ~f:(function
@@ -1389,7 +1383,7 @@ let () =
     end;
     t.hook Rule_completed
   in
-  Memo.set_impl execute_rule_def execute_rule
+  set_execute_rule_impl execute_rule
 
 let () =
   (* a rule can have multiple files, but rule.run_rule may only be called once *)
@@ -1403,7 +1397,7 @@ let () =
         Fiber.return ()
       | Some rule -> execute_rule rule)
   in
-  Memo.set_impl build_file_def build_file
+  set_build_file_impl build_file
 
 let () =
   let f g =
@@ -1411,7 +1405,7 @@ let () =
     |> Path.Set.to_list
     |> Fiber.parallel_iter ~f:build_file
   in
-  Memo.set_impl Pred.build_def f
+  Pred.set_build_impl f
 
 let shim_of_build_goal t request =
   let request =

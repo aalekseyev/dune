@@ -878,4 +878,8 @@ let create_fdecl name ~doc ~input ~visibility ~output typ =
     create name ~doc ~input ~visibility ~output typ
       (Some (Function_type.of_thunk typ (fun () -> Fdecl.get fdecl)))
   in
-  exec memo, Fdecl.set fdecl
+  memo, Fdecl.set fdecl
+
+let memo_fdecl name ~doc ~input ~visibility ~output typ =
+  let memo, set_impl = create_fdecl name ~doc ~input ~visibility ~output typ in
+  (exec memo, set_impl)
