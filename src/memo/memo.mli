@@ -122,6 +122,15 @@ val create
   -> 'f option
   -> ('i, 'o, 'f) t
 
+val create_fdecl
+  :  string
+  -> doc:string
+  -> input:(module Input with type t = 'i)
+  -> visibility:'i Visibility.t
+  -> output:('o Output.t)
+  -> ('i, 'o, 'f) Function_type.t
+  -> 'f * ('f -> unit)
+
 val create_hidden
   :  string
   -> doc:string

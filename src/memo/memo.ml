@@ -16,10 +16,18 @@ module Function_type : sig
     | Sync : ('a, 'b, ('a -> 'b)) t
     | Async : ('a, 'b, ('a -> 'b Fiber.t)) t
 
+  val of_thunk : ('a, 'b, 'f) t -> (unit -> 'f) -> 'f
+
 end = struct
   type ('a, 'b, 'f) t =
     | Sync : ('a, 'b, ('a -> 'b)) t
     | Async : ('a, 'b, ('a -> 'b Fiber.t)) t
+
+  let of_thunk (type i) (type o) (type f)
+        (typ : (i, o, f) t) (f : unit -> f) : f =
+    match typ with
+    | Sync -> fun x -> f () x
+    | Async -> fun x -> f () x
 end
 
 module Function = struct
@@ -861,3 +869,13 @@ end
 module Implicit_output = Implicit_output
 
 let on_already_reported f = on_already_reported := f
+
+let create_fdecl name ~doc ~input ~visibility ~output typ =
+  (* aalekseyev: this is not using the fdecl part of [_ Memo.t] because I'd
+     like to get rid of that. *)
+  let fdecl = Fdecl.create () in
+  let memo =
+    create name ~doc ~input ~visibility ~output typ
+      (Some (Function_type.of_thunk typ (fun () -> Fdecl.get fdecl)))
+  in
+  exec memo, Fdecl.set fdecl
