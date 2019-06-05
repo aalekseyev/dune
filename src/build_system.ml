@@ -251,6 +251,7 @@ end
 module Loaded = struct
 
   type build = {
+    allowed_subdirs : Dir_set.t;
     rules_produced : Rules.t;
     targets_here : Internal_rule.t Path.Build.Map.t;
     targets_of_alias_dir : Internal_rule.t Path.Build.Map.t;
@@ -260,9 +261,11 @@ module Loaded = struct
     | Non_build of Path.Set.t
     | Build of build
 
-  let no_rules =
+  let no_rules ~allowed_subdirs =
     Build
-      { rules_produced = Rules.empty;
+      {
+        allowed_subdirs;
+        rules_produced = Rules.empty;
         targets_here = Path.Build.Map.empty;
         targets_of_alias_dir = Path.Build.Map.empty;
       }
@@ -336,6 +339,19 @@ module Subdir_set = struct
   type t =
     | All
     | These of String.Set.t
+
+  let to_dir_set = function
+    | All -> Dir_set.universal
+    | These s ->
+       Dir_set.of_list
+         (List.map (String.Set.to_list s) ~f:Path.Local.of_string)
+
+  let of_dir_set d =
+    match Dir_set.toplevel_subdirs d with
+    | `Infinite -> All
+    | `Finite s -> These s
+
+  let of_list l = These (String.Set.of_list l)
 
   let empty = These String.Set.empty
 
@@ -433,9 +449,19 @@ let get_dir_triage t ~dir =
     Dir_triage.Known (Non_build (
       Path.set_of_source_paths (File_tree.files_of t.file_tree dir)))
   | None ->
+    let allowed_subdirs =
+      Subdir_set.to_dir_set (
+        Subdir_set.of_list (
+          [".aliases"; "install";] @ String.Map.keys t.contexts))
+    in
     if Path.equal dir Path.build_dir then
-      (* Not allowed to look here *)
-      Dir_triage.Known Loaded.no_rules
+      Dir_triage.Known (Loaded.no_rules ~allowed_subdirs)
+    else if Path.equal dir (Path.relative Path.build_dir "install") then
+      Dir_triage.Known (Loaded.no_rules ~allowed_subdirs:(
+        Subdir_set.to_dir_set (
+          Subdir_set.of_list (
+            String.Map.keys t.contexts))
+      ))
     else if not (Path.is_managed dir) then
       Dir_triage.Known
         (Non_build (
@@ -454,7 +480,7 @@ let get_dir_triage t ~dir =
       if ctx = ".aliases" then
         Alias_dir_of (Path.Build.(append_source root) sub_dir)
       else if ctx <> "install" && not (String.Map.mem t.contexts ctx) then
-        Dir_triage.Known Loaded.no_rules
+        Dir_triage.Known (Loaded.no_rules ~allowed_subdirs:Dir_set.empty)
       else
         Need_step2
     end
@@ -554,8 +580,7 @@ let remove_old_artifacts t ~dir ~(subdirs_to_keep : Subdir_set.t) =
               match subdirs_to_keep with
               | All -> ()
               | These set ->
-                if String.Set.mem set fn ||
-                   Path.Build.Set.mem t.build_dirs_to_keep path then
+                if String.Set.mem set fn then
                   ()
                 else
                   Path.rm_rf (Path.build path)
@@ -888,6 +913,13 @@ The following targets are not:
         end)
 
   let load_dir_step2_exn t ~dir =
+    let allowed_by_parent =
+      (match load_dir ~dir:(Path.parent_exn dir) with
+       | Non_build _ -> Dir_set.just_the_root
+       | Build { allowed_subdirs; _ } ->
+         Dir_set.descend allowed_subdirs (Path.basename dir)
+      )
+    in
     let context_name, sub_dir =
       match Utils.analyse_target dir with
       | Install (ctx, path) ->
@@ -1010,6 +1042,52 @@ The following targets are not:
     in
     let targets_here = compile_rules ~dir rules in
     add_rules_exn t targets_here;
+   (if Dir_set.is_empty allowed_by_parent
+    && Option.is_some (Path.Build.Map.find (Rules.to_map rules_produced) dir)
+    then Exn.code_error
+           "Generated a rule in a directory not allowed by the parent"
+           ["dir", (Path.Build.to_sexp dir)]
+    else
+      ()
+   );
+   let rules_generated_in =
+     (Dir_set.of_list
+        (Path.Build.Map.keys (Rules.to_map rules_produced)
+         |> List.filter_map ~f:(fun subdir ->
+           let reach = (Path.reach (Path.build subdir) ~from:(Path.build dir)) in
+           match
+             String.lsplit2 ~on:'/' reach with
+           | Some ("..", _) -> None
+           | None -> None
+           | Some (_, _) ->
+             Some (Path.Local.of_string reach)
+         )
+        )
+     )
+   in
+   (* CR aalekseyev: trim down [weird_set] *)
+   let weird_set =
+     [
+       "dir-that-doesnt-exist";
+       "bin";
+       ".bin";
+       ".wrapped_compat";
+       ".utop";
+       "public_cmi";
+       ".byte_objs";
+       "dir-that-is-later-created";
+       ".formatted";
+     ]
+   in
+   let descendants_to_keep =
+     Dir_set.union_all [
+       rules_generated_in;
+       (Subdir_set.to_dir_set (Subdir_set.of_list weird_set));
+       (Subdir_set.to_dir_set subdirs_to_keep);
+       allowed_by_parent;
+     ]
+   in
+   let subdirs_to_keep = Subdir_set.of_dir_set descendants_to_keep in
     remove_old_artifacts t ~dir ~subdirs_to_keep;
     let alias_targets =
       (match alias_rules with
@@ -1019,6 +1097,7 @@ The following targets are not:
          Some (f ~subdirs_to_keep))
     in
     Loaded.Build {
+      allowed_subdirs = descendants_to_keep;
       rules_produced;
       targets_here;
       targets_of_alias_dir =
@@ -1040,12 +1119,14 @@ The following targets are not:
        | Build {
          targets_here = _;
          targets_of_alias_dir;
-         rules_produced
+         rules_produced;
+         allowed_subdirs;
        } ->
          Loaded.Build {
            targets_here = targets_of_alias_dir;
            targets_of_alias_dir = Path.Build.Map.empty;
-           rules_produced
+           rules_produced;
+           allowed_subdirs;
          })
     | Need_step2 ->
       load_dir_step2_exn t ~dir

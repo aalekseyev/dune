@@ -184,4 +184,4 @@ let of_list paths =
   union_all (
     (List.map paths
        ~f:(fun p -> 
-         singleton' (Path.Relative.explode p))))
+         singleton' (Path.Local.explode p))))
