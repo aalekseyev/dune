@@ -912,14 +912,69 @@ The following targets are not:
           end
         end)
 
+  module Allowed_dirs = struct
+    type t = {
+      known_to_be_nonempty : bool;
+      full : Dir_set.t Memo.Lazy.t;
+    }
+    
+    let force t = (Memo.Lazy.force t.full)
+    
+    let is_empty t =
+      if t.known_to_be_nonempty then
+        false
+      else
+        Dir_set.is_empty (force t)
+
+  end
+
+  let allowed_subdirs_approx ~dir =
+    let t = t () in
+    match (
+      match Utils.analyse_target dir with
+      | Install (ctx, path) ->
+        Some (Context_or_install.Install ctx, path)
+      | Regular (ctx, path) ->
+        Some (Context_or_install.Context ctx, path)
+      | Alias _ | Other _ ->
+        None)
+    with
+    | None -> String.Set.empty
+    | Some (context_name, sub_dir) ->
+      let file_tree_dir =
+        match context_name with
+        | Install _ ->
+          None
+        | Context _ ->
+          File_tree.find_dir t.file_tree sub_dir
+      in
+      let subdirs_to_keep =
+        match context_name with
+        | Install _ ->
+          String.Set.empty
+        | Context _ ->
+          let subdirs =
+            match file_tree_dir with
+            | None -> String.Set.empty
+            | Some dir ->
+              File_tree.Dir.sub_dir_names dir
+          in
+          subdirs
+      in
+      subdirs_to_keep
+
+  let allowed_dirs ~dir ~subdir : Allowed_dirs.t =
+    {
+      known_to_be_nonempty =  String.Set.mem (allowed_subdirs_approx ~dir) subdir;
+      full = Memo.Lazy.create (fun () ->
+        (match load_dir ~dir with
+         | Non_build _ -> Dir_set.just_the_root
+         | Build { allowed_subdirs; _ } ->
+           Dir_set.descend allowed_subdirs subdir
+        ))
+    }
+
   let load_dir_step2_exn t ~dir =
-    let allowed_by_parent =
-      (match load_dir ~dir:(Path.parent_exn dir) with
-       | Non_build _ -> Dir_set.just_the_root
-       | Build { allowed_subdirs; _ } ->
-         Dir_set.descend allowed_subdirs (Path.basename dir)
-      )
-    in
     let context_name, sub_dir =
       match Utils.analyse_target dir with
       | Install (ctx, path) ->
@@ -1042,14 +1097,19 @@ The following targets are not:
     in
     let targets_here = compile_rules ~dir rules in
     add_rules_exn t targets_here;
-   (if Dir_set.is_empty allowed_by_parent
-    && Option.is_some (Path.Build.Map.find (Rules.to_map rules_produced) dir)
-    then Exn.code_error
-           "Generated a rule in a directory not allowed by the parent"
-           ["dir", (Path.Build.to_sexp dir)]
-    else
-      ()
-   );
+    let allowed_by_parent =
+      allowed_dirs
+        ~dir:(Path.parent_exn (Path.build dir))
+        ~subdir:(Path.basename (Path.build dir))
+    in
+    (if Allowed_dirs.is_empty allowed_by_parent
+     && Option.is_some (Path.Build.Map.find (Rules.to_map rules_produced) dir)
+     then Exn.code_error
+            "Generated a rule in a directory not allowed by the parent"
+            ["dir", (Path.Build.to_sexp dir)]
+     else
+       ()
+    );
    let rules_generated_in =
      (Dir_set.of_list
         (Path.Build.Map.keys (Rules.to_map rules_produced)
@@ -1084,7 +1144,7 @@ The following targets are not:
        rules_generated_in;
        (Subdir_set.to_dir_set (Subdir_set.of_list weird_set));
        (Subdir_set.to_dir_set subdirs_to_keep);
-       allowed_by_parent;
+       (Allowed_dirs.force allowed_by_parent);
      ]
    in
    let subdirs_to_keep = Subdir_set.of_dir_set descendants_to_keep in
