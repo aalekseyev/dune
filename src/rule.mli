@@ -6,7 +6,7 @@ open! Import
 module Info : sig
   type t =
     | From_dune_file of Loc.t
-    | Internal
+    | Internal of Printexc.raw_backtrace
     | Source_file_copy
 
   val of_loc_opt : Loc.t option -> t

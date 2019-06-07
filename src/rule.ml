@@ -4,16 +4,16 @@ open Import
 module Info = struct
   type t =
     | From_dune_file of Loc.t
-    | Internal
+    | Internal of Printexc.raw_backtrace
     | Source_file_copy
 
   let of_loc_opt = function
-    | None -> Internal
+    | None -> Internal (Printexc.get_callstack 50)
     | Some loc -> From_dune_file loc
 
   let loc = function
     | From_dune_file loc -> Some loc
-    | Internal
+    | Internal _
     | Source_file_copy -> None
 end
 
@@ -30,7 +30,13 @@ type t =
   }
 
 let make ?(sandbox=false) ?(mode=Dune_file.Rule.Mode.Standard)
-      ~context ~env ?(locks=[]) ?(info=Info.Internal) build =
+      ~context ~env ?(locks=[])
+      ?info
+      build =
+  let info = match info with
+    | Some info -> info
+    | None -> Info.Internal (Printexc.get_callstack 50)
+  in
   let targets = Build.targets build in
   let dir =
     match Path.Build.Set.choose targets with
@@ -45,7 +51,12 @@ let make ?(sandbox=false) ?(mode=Dune_file.Rule.Mode.Standard)
         Path.Build.(<>) (Path.Build.parent_exn path) dir)
       then begin
         match info with
-        | Internal | Source_file_copy ->
+        | Internal bt ->
+          Exn.code_error "rule has targets in different directories"
+            [ "targets", Path.Build.Set.to_sexp targets
+            ; "backtrace", Sexp.Atom (Printexc.raw_backtrace_to_string bt)
+            ]
+        | Source_file_copy ->
           Exn.code_error "rule has targets in different directories"
             [ "targets", Path.Build.Set.to_sexp targets
             ]

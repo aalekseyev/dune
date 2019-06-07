@@ -166,7 +166,7 @@ module Internal_rule = struct
     ; context     = None
     ; build       = Build.return (Action.Progn [])
     ; mode        = Standard
-    ; info        = Internal
+    ; info        = Internal (Printexc.get_callstack 50)
     ; dir         = Path.Build.root
     ; env         = None
     ; sandbox     = false
@@ -506,7 +506,9 @@ let rule_conflict fn rule' rule =
     match rule.info with
     | From_dune_file { start; _ } ->
       start.pos_fname ^ ":" ^ string_of_int start.pos_lnum
-    | Internal -> "<internal location>"
+    | Internal bt ->
+      Printf.sprintf "<internal location: %s>"
+        (Printexc.raw_backtrace_to_string bt)
     | Source_file_copy -> "file present in source tree"
   in
   let fn = Path.build fn in
