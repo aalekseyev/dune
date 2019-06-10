@@ -2,18 +2,23 @@
 
   $ echo 'let x = 8' > future_example.ml
 
+  $ mkdir ppx_whatever
+  $ cat > ppx_whatever/dune <<EOF
+  > (library
+  > (name ppx_whatever)
+  > (ppx.driver (main "(fun () ->
+  >    Printf.printf \"let x = 10\")"))
+  > )
+  > EOF
+
   $ cat > dune <<EOF
   > (library
   >  (name future_example)
-  >  (preprocess (pps -- -pp %{bin:ocaml-syntax-shims}))
+  >  (preprocess (pps ppxlib -- -pp ./ocaml-syntax-shims))
+  >  (preprocessor_deps ./ocaml-syntax-shims)
   >  )
-  > 
+  > (rule (copy %{bin:ocaml-syntax-shims} ./ocaml-syntax-shims))
   > EOF
 
   $ dune build @all
-  File "dune", line 3, characters 27-50:
-  3 |  (preprocess (pps -- -pp %{bin:ocaml-syntax-shims}))
-                                 ^^^^^^^^^^^^^^^^^^^^^^^
-  Error: %{bin:..} isn't allowed in this position
-  [1]
 

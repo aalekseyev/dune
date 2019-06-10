@@ -323,7 +323,7 @@ let get_installed_binaries stanzas ~(context : Context.t) =
       | Expanded x -> Some x
       | Restricted ->
         Errors.fail (String_with_vars.Var.loc var)
-          "%s isn't allowed in this position"
+          "%s isn't allowed in this position (huh)"
           (String_with_vars.Var.describe var)
     ) sw
     |> Value.to_string ~dir

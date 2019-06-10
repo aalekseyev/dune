@@ -88,10 +88,10 @@ let expand_var_exn t var syn =
   t.expand_var t var syn
   |> Option.map ~f:(function
     | Ok s -> s
-    | Error _ ->
+    | Error (e : Pform.Expansion.t) ->
       Errors.fail (String_with_vars.Var.loc var)
-        "%s isn't allowed in this position"
-        (String_with_vars.Var.describe var))
+        "%s isn't allowed in this position (%s)"
+        (String_with_vars.Var.describe var) (Sexp.to_string (Pform.Expansion.to_sexp e)))
 
 let make ~scope ~(context : Context.t) ~lib_artifacts
       ~bin_artifacts_host =
