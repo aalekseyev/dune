@@ -178,6 +178,7 @@ let exclusions =
   (* for the following tests sandboxing is disabled because absolute paths end up
      appearing in the output if we sandbox *)
   ; make "env-bins" ~disable_sandboxing:true
+  ; make "corrections"  ~skip_platforms:[Mac] (* uses bash *)
   ]
 
 let all_tests = lazy (
