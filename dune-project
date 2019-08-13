@@ -53,3 +53,13 @@ versions.  It supports reporting the version from the version control
 system during development to get an precise reference of when the
 executable was built.
 "))
+
+(package
+ (name dune-action)
+ (depends
+  (ocaml (>= 4.02))
+  (dune (>= 1.11)))
+ (synopsis "TODO")
+ (description "\
+TODO
+"))
