@@ -1398,6 +1398,31 @@ end = struct
       | () ->
         () )
 
+  let something_changed
+        ~deps ~(prev_trace : Trace.Entry.t option) ~rule_digest ~targets_digest =
+    Fiber.return (
+      match (prev_trace, targets_digest, Dep.Set.has_universe deps) with
+      | Some prev_trace, Some targets_digest, false ->
+        prev_trace.rule_digest <> rule_digest
+        || prev_trace.targets_digest <> targets_digest
+      | _ ->
+        true)
+
+  let contents file =
+    let* () = build_deps (File file) in
+    Io.read_file ...
+
+  let action_exec_staged ~deps ~action =
+    let rec loop ~deps =
+      let*res = exec1 ~action ~deps in
+      match res with
+      | Done -> return Done
+      | Need_more_deps extra_deps ->
+        let* () = build_deps extra_deps in
+        loop ~deps:(extra_deps @ deps)
+    in
+    loop ~deps
+
   let execute_rule_impl rule =
     let t = t () in
     let { Internal_rule.dir
@@ -1481,13 +1506,8 @@ end = struct
       !Clflags.force
       && List.exists targets_as_list ~f:Path.Build.is_alias_stamp_file
     in
-    let something_changed =
-      match (prev_trace, targets_digest, Dep.Set.has_universe deps) with
-      | Some prev_trace, Some targets_digest, false ->
-        prev_trace.rule_digest <> rule_digest
-        || prev_trace.targets_digest <> targets_digest
-      | _ ->
-        true
+    let* something_changed =
+      something_changed ~prev_trace ~rule_digest ~targets_digest ~deps
     in
     let* () =
       if force || something_changed then (
