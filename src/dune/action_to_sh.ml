@@ -38,6 +38,9 @@ let simplify act =
   let rec loop (act : Action.For_shell.t) acc =
     match act with
     | Run (prog, args) -> Run (prog, args) :: acc
+    (* TODO jstaron: What to do with case below? *)
+    | Run_dynamic (_prog, _args) ->
+      failwith "ONE CAN NOT SIMPLIFY ACTION CONTAINING DYNAMIC RUN"
     | Chdir (p, act) -> loop act (Chdir p :: mkdir p :: acc)
     | Setenv (k, v, act) -> loop act (Setenv (k, v) :: acc)
     | Redirect_out (outputs, fn, act) ->

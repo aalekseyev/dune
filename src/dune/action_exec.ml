@@ -38,6 +38,9 @@ let rec exec t ~ectx ~dir ~env ~stdout_to ~stderr_to ~stdin_from =
   | Run (Error e, _) -> Action.Prog.Not_found.raise e
   | Run (Ok prog, args) ->
     exec_run ~ectx ~dir ~env ~stdout_to ~stderr_to ~stdin_from prog args
+  | Run_dynamic (Error e, _) -> Action.Prog.Not_found.raise e
+  | Run_dynamic (Ok prog, args) ->
+    exec_run ~ectx ~dir ~env ~stdout_to ~stderr_to ~stdin_from prog args
   | Chdir (dir, t) -> exec t ~ectx ~dir ~env ~stdout_to ~stderr_to ~stdin_from
   | Setenv (var, value, t) ->
     exec t ~ectx ~dir ~stdout_to ~stderr_to ~stdin_from

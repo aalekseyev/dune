@@ -105,6 +105,16 @@ module Partial = struct
         | This path -> This (map_exe path)
       in
       Run (prog, more_args @ args)
+    (* TODO jstaron: This is copy paste from above. Remove duplication. *)
+    | Run_dynamic (prog, args) ->
+      let args = List.concat_map args ~f:(E.strings ~expander) in
+      let prog, more_args = E.prog_and_args ~expander prog in
+      let prog =
+        match prog with
+        | Search _ -> prog
+        | This path -> This (map_exe path)
+      in
+      Run_dynamic (prog, more_args @ args)
     | Chdir (fn, t) ->
       let fn = E.path ~expander fn in
       let expander =
@@ -206,7 +216,25 @@ let rec partial_expand t ~map_exe ~expander : Partial.t =
         | This path -> This (map_exe path)
       in
       Run (Left prog, more_args @ args)
-    | Right _ as prog -> Run (prog, args) )
+    | Right _ as prog -> Run (prog, args)
+    (* TODO jstaron: This is copy-paste from above. Remove duplication. *) )
+  | Run_dynamic (prog, args) -> (
+    let args =
+      List.concat_map args ~f:(fun arg ->
+        match E.strings ~expander arg with
+        | Left args -> List.map args ~f:Either.left
+        | Right _ as x -> [ x ])
+    in
+    match E.prog_and_args ~expander prog with
+    | Left (prog, more_args) ->
+      let more_args = List.map more_args ~f:Either.left in
+      let prog =
+        match prog with
+        | Search _ -> prog
+        | This path -> This (map_exe path)
+      in
+      Run_dynamic (Left prog, more_args @ args)
+    | Right _ as prog -> Run_dynamic (prog, args) )
   | Chdir (fn, t) -> (
     let res = E.path ~expander fn in
     match res with
@@ -351,6 +379,7 @@ module Infer = struct
     let rec infer acc t =
       match t with
       | Run (prog, _) -> acc +<! prog
+      | Run_dynamic (prog, _) -> acc +<! prog
       | Redirect_out (_, fn, t) -> infer (acc +@+ fn) t
       | Redirect_in (_, fn, t) -> infer (acc +< fn) t
       | Cat fn -> acc +< fn
