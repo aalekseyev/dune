@@ -57,6 +57,10 @@ struct
           , let+ prog = Program.decode
             and+ args = repeat String.decode in
             Run (prog, args) )
+        ; ( "run-dynamic"
+          , let+ _prog = Program.decode
+            and+ _args = repeat String.decode in
+            failwith "DYNAMIC-ACTION" )
         ; ( "chdir"
           , let+ dn = path
             and+ t = t in
