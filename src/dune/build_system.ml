@@ -283,6 +283,7 @@ module Trace_db : sig
   module Entry : sig
     type t =
       { rule_digest : Digest.t
+      ; dynamic_deps : Dep.Set.t
       ; targets_digest : Digest.t
       }
   end
@@ -294,6 +295,7 @@ end = struct
   module Entry = struct
     type t =
       { rule_digest : Digest.t
+      ; dynamic_deps : Dep.Set.t
       ; targets_digest : Digest.t
       }
   end
@@ -308,7 +310,7 @@ end = struct
 
     let name = "INCREMENTAL-DB"
 
-    let version = 2
+    let version = 3
   end)
 
   let needs_dumping = ref false
@@ -1345,7 +1347,7 @@ end = struct
     let rec loop () =
       let* result = Action_exec.exec ~context ~env ~targets action in
       match result with
-      | Done _used_deps -> Fiber.return ()
+      | Done used_deps -> Fiber.return used_deps
       | Need_more_deps deps ->
         let* () = build_deps deps in
         loop ()
@@ -1400,6 +1402,11 @@ end = struct
         | Some e, _ -> e
         | None, Some c -> c.env
       in
+      let deps =
+        match prev_trace with
+        | None -> deps
+        | Some prev_trace -> Dep.Set.union deps prev_trace.dynamic_deps
+      in
       let trace =
         ( Dep.Set.trace deps ~sandbox_mode ~env ~eval_pred
         , List.map targets_as_list ~f:(fun p -> Path.to_string (Path.build p))
@@ -1420,7 +1427,6 @@ end = struct
       !Clflags.force
       && List.exists targets_as_list ~f:Path.Build.is_alias_stamp_file
     in
-    (* TODO jstaron: Take previous dynamic dependencies into digest. *)
     let something_changed =
       match (prev_trace, targets_digest, Dep.Set.has_universe deps) with
       | Some prev_trace, Some targets_digest, false ->
@@ -1454,16 +1460,18 @@ end = struct
         in
         let chdirs = Action.chdirs action in
         Path.Set.iter chdirs ~f:Fs.(mkdir_p_or_check_exists ~loc);
-        let+ () =
+        let+ dynamic_deps =
           with_locks locks ~f:(fun () ->
             Fiber.map
               (execute_action_until_all_deps_ready ~context ~env ~targets
-                action) ~f:(fun _ ->
-                match sandboxed with
+                action) ~f:(fun used_deps ->
+                ( match sandboxed with
                 | None -> ()
                 | Some sandboxed ->
                   List.iter targets_as_list ~f:(fun target ->
-                    rename_optional_file ~src:(sandboxed target) ~dst:target)))
+                    rename_optional_file ~src:(sandboxed target) ~dst:target)
+                );
+                used_deps))
         in
         Option.iter sandbox ~f:(fun (p, _mode) -> Path.rm_rf (Path.build p));
         (* All went well, these targets are no longer pending *)
@@ -1471,7 +1479,8 @@ end = struct
         let targets_digest =
           compute_targets_digest_or_raise_error ~info targets_as_list
         in
-        Trace_db.set (Path.build head_target) { rule_digest; targets_digest }
+        Trace_db.set (Path.build head_target)
+          { rule_digest; dynamic_deps; targets_digest }
       ) else
         Fiber.return ()
     in
