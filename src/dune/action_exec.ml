@@ -3,13 +3,15 @@ open Import
 open Fiber.O
 
 type done_or_more_deps =
-  | Done
+  | Done of Dep.Set.t (* Dynamic deps used by this exec call. *)
   | Need_more_deps of Dep.Set.t
 
 type exec_context =
   { context : Context.t option
   ; purpose : Process.purpose
   }
+
+let empty_done = Done Dep.Set.empty
 
 let exec_run ~ectx ~dir ~env ~stdout_to ~stderr_to ~stdin_from prog args =
   ( match ectx.context with
@@ -35,7 +37,7 @@ let exec_run ~ectx ~dir ~env ~stdout_to ~stderr_to ~stdin_from prog args =
     Process.run Strict ~dir ~env ~stdout_to ~stderr_to ~stdin_from
       ~purpose:ectx.purpose prog args
   in
-  Done
+  empty_done
 
 let exec_echo stdout_to str =
   Fiber.return (output_string (Process.Io.out_channel stdout_to) str)
@@ -46,6 +48,7 @@ let rec exec t ~ectx ~dir ~env ~stdout_to ~stderr_to ~stdin_from =
   | Run (Ok prog, args) ->
     exec_run ~ectx ~dir ~env ~stdout_to ~stderr_to ~stdin_from prog args
   | Run_dynamic (Error e, _) -> Action.Prog.Not_found.raise e
+  (* TODO jstaron: Implement below. *)
   | Run_dynamic (Ok _prog, _args) -> failwith "ACTION EXEC RUN DYNAMIC"
   | Chdir (dir, t) -> exec t ~ectx ~dir ~env ~stdout_to ~stderr_to ~stdin_from
   | Setenv (var, value, t) ->
@@ -53,7 +56,7 @@ let rec exec t ~ectx ~dir ~env ~stdout_to ~stderr_to ~stdin_from =
       ~env:(Env.add env ~var ~value)
   | Redirect_out (Stdout, fn, Echo s) ->
     Io.write_file (Path.build fn) (String.concat s ~sep:" ");
-    Fiber.return Done
+    Fiber.return empty_done
   | Redirect_out (outputs, fn, t) ->
     let fn = Path.build fn in
     redirect_out ~ectx ~dir outputs fn t ~env ~stdout_to ~stderr_to ~stdin_from
@@ -64,18 +67,18 @@ let rec exec t ~ectx ~dir ~env ~stdout_to ~stderr_to ~stdin_from =
       ~stderr_to ~stdin_from
   | Progn l ->
     exec_list l ~ectx ~dir ~env ~stdout_to ~stderr_to ~stdin_from
-      ~deps_acc:Dep.Set.empty
+      ~result_acc:empty_done
   | Echo strs ->
     let+ () = exec_echo stdout_to (String.concat strs ~sep:" ") in
-    Done
+    empty_done
   | Cat fn ->
     Io.with_file_in fn ~f:(fun ic ->
       Io.copy_channels ic (Process.Io.out_channel stdout_to));
-    Fiber.return Done
+    Fiber.return empty_done
   | Copy (src, dst) ->
     let dst = Path.build dst in
     Io.copy_file ~src ~dst ();
-    Fiber.return Done
+    Fiber.return empty_done
   | Symlink (src, dst) ->
     ( if Sys.win32 then
       let dst = Path.build dst in
@@ -98,7 +101,7 @@ let rec exec t ~ectx ~dir ~env ~stdout_to ~stderr_to ~stdin_from =
           Unix.symlink src dst
         )
       | exception _ -> Unix.symlink src dst );
-    Fiber.return Done
+    Fiber.return empty_done
   | Copy_and_add_line_directive (src, dst) ->
     Io.with_file_in src ~f:(fun ic ->
       Path.build dst
@@ -107,7 +110,7 @@ let rec exec t ~ectx ~dir ~env ~stdout_to ~stderr_to ~stdin_from =
         output_string oc
           (Utils.line_directive ~filename:(Path.to_string fn) ~line_number:1);
         Io.copy_channels ic oc));
-    Fiber.return Done
+    Fiber.return empty_done
   | System cmd ->
     let path, arg =
       Utils.system_shell_exn ~needed_to:"interpret (system ...) actions"
@@ -119,20 +122,20 @@ let rec exec t ~ectx ~dir ~env ~stdout_to ~stderr_to ~stdin_from =
       [ "-e"; "-u"; "-o"; "pipefail"; "-c"; cmd ]
   | Write_file (fn, s) ->
     Io.write_file (Path.build fn) s;
-    Fiber.return Done
+    Fiber.return empty_done
   | Rename (src, dst) ->
     Unix.rename (Path.Build.to_string src) (Path.Build.to_string dst);
-    Fiber.return Done
+    Fiber.return empty_done
   | Remove_tree path ->
     Path.rm_rf (Path.build path);
-    Fiber.return Done
+    Fiber.return empty_done
   | Mkdir path ->
     if Path.is_in_build_dir path then
       Path.mkdir_p path
     else
       Code_error.raise "Action_exec.exec: mkdir on non build dir"
         [ ("path", Path.to_dyn path) ];
-    Fiber.return Done
+    Fiber.return empty_done
   | Digest_files paths ->
     let s =
       let data =
@@ -142,7 +145,7 @@ let rec exec t ~ectx ~dir ~env ~stdout_to ~stderr_to ~stdin_from =
       Digest.generic data
     in
     let+ () = exec_echo stdout_to (Digest.to_string_raw s) in
-    Done
+    empty_done
   | Diff ({ optional; file1; file2; mode } as diff) ->
     let remove_intermediate_file () =
       if optional then
@@ -150,7 +153,7 @@ let rec exec t ~ectx ~dir ~env ~stdout_to ~stderr_to ~stdin_from =
     in
     if Diff.eq_files diff then (
       remove_intermediate_file ();
-      Fiber.return Done
+      Fiber.return empty_done
     ) else
       let is_copied_from_source_tree file =
         match Path.extract_build_context_dir_maybe_sandboxed file with
@@ -194,7 +197,7 @@ let rec exec t ~ectx ~dir ~env ~stdout_to ~stderr_to ~stdin_from =
                 remove_intermediate_file () );
             Fiber.return ())
       in
-      Done
+      empty_done
   | Merge_files_into (sources, extras, target) ->
     let lines =
       List.fold_left
@@ -206,7 +209,7 @@ let rec exec t ~ectx ~dir ~env ~stdout_to ~stderr_to ~stdin_from =
     in
     let target = Path.build target in
     Io.write_lines target (String.Set.to_list lines);
-    Fiber.return Done
+    Fiber.return empty_done
 
 and redirect_out outputs fn t ~ectx ~dir ~env ~stdout_to ~stderr_to ~stdin_from
   =
@@ -234,10 +237,21 @@ and redirect_in inputs fn t ~ectx ~dir ~env ~stdout_to ~stderr_to ~stdin_from:_
   Process.Io.release in_;
   result
 
-and exec_list l ~ectx ~dir ~env ~stdout_to ~stderr_to ~stdin_from ~deps_acc =
+and merge_result (first : done_or_more_deps) (second : done_or_more_deps) =
+  match (first, second) with
+  | Done first, Done second -> Done (Dep.Set.union first second)
+  | Need_more_deps first, Need_more_deps second ->
+    Need_more_deps (Dep.Set.union first second)
+  | (Need_more_deps _ as result), _
+   |_, (Need_more_deps _ as result) ->
+    result
+
+and exec_list l ~ectx ~dir ~env ~stdout_to ~stderr_to ~stdin_from ~result_acc =
   match l with
-  | [] -> Fiber.return Done
-  | [ t ] -> exec t ~ectx ~dir ~env ~stdout_to ~stderr_to ~stdin_from
+  | [] -> Fiber.return empty_done
+  | [ t ] ->
+    let+ result = exec t ~ectx ~dir ~env ~stdout_to ~stderr_to ~stdin_from in
+    merge_result result result_acc
   | t :: rest ->
     let* done_or_deps =
       let stdout_to = Process.Io.multi_use stdout_to in
@@ -245,12 +259,9 @@ and exec_list l ~ectx ~dir ~env ~stdout_to ~stderr_to ~stdin_from ~deps_acc =
       let stdin_from = Process.Io.multi_use stdin_from in
       exec t ~ectx ~dir ~env ~stdout_to ~stderr_to ~stdin_from
     in
-    let deps_acc =
-      match done_or_deps with
-      | Done -> deps_acc
-      | Need_more_deps deps -> Dep.Set.union deps_acc deps
-    in
-    exec_list rest ~ectx ~dir ~env ~stdout_to ~stderr_to ~stdin_from ~deps_acc
+    let result_acc = merge_result done_or_deps result_acc in
+    exec_list rest ~ectx ~dir ~env ~stdout_to ~stderr_to ~stdin_from
+      ~result_acc
 
 let exec ~targets ~context ~env t =
   let env =

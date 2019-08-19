@@ -1345,7 +1345,7 @@ end = struct
     let rec loop () =
       let* result = Action_exec.exec ~context ~env ~targets action in
       match result with
-      | Done -> Fiber.return ()
+      | Done _used_deps -> Fiber.return ()
       | Need_more_deps deps ->
         let* () = build_deps deps in
         loop ()

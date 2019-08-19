@@ -1,7 +1,7 @@
 open! Stdune
 
 type done_or_more_deps =
-  | Done
+  | Done of Dep.Set.t (* Dynamic deps used by this exec call. *)
   | Need_more_deps of Dep.Set.t
 
 val exec :
