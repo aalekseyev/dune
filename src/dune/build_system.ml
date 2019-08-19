@@ -1443,8 +1443,9 @@ end = struct
         Path.Set.iter chdirs ~f:Fs.(mkdir_p_or_check_exists ~loc);
         let+ () =
           with_locks locks ~f:(fun () ->
-            Fiber.map (Action_exec.exec ~context ~env ~targets action)
-              ~f:(fun () ->
+            Fiber.map
+              (Action_exec.exec ~context ~env ~targets action)
+              (* TODO jstaron: Implement rerunning. *) ~f:(fun _ ->
                 match sandboxed with
                 | None -> ()
                 | Some sandboxed ->

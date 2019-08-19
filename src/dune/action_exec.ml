@@ -2,6 +2,10 @@ open! Stdune
 open Import
 open Fiber.O
 
+type done_or_more_deps =
+  | Done
+  | Need_more_deps of Dep.Set.t
+
 type exec_context =
   { context : Context.t option
   ; purpose : Process.purpose
@@ -27,8 +31,11 @@ let exec_run ~ectx ~dir ~env ~stdout_to ~stderr_to ~stdin_from prog args =
     in
     invalid_prefix (Path.relative Path.build_dir target.name);
     invalid_prefix (Path.relative Path.build_dir ("install/" ^ target.name)) );
-  Process.run Strict ~dir ~env ~stdout_to ~stderr_to ~stdin_from
-    ~purpose:ectx.purpose prog args
+  let+ () =
+    Process.run Strict ~dir ~env ~stdout_to ~stderr_to ~stdin_from
+      ~purpose:ectx.purpose prog args
+  in
+  Done
 
 let exec_echo stdout_to str =
   Fiber.return (output_string (Process.Io.out_channel stdout_to) str)
@@ -46,7 +53,7 @@ let rec exec t ~ectx ~dir ~env ~stdout_to ~stderr_to ~stdin_from =
       ~env:(Env.add env ~var ~value)
   | Redirect_out (Stdout, fn, Echo s) ->
     Io.write_file (Path.build fn) (String.concat s ~sep:" ");
-    Fiber.return ()
+    Fiber.return Done
   | Redirect_out (outputs, fn, t) ->
     let fn = Path.build fn in
     redirect_out ~ectx ~dir outputs fn t ~env ~stdout_to ~stderr_to ~stdin_from
@@ -55,16 +62,20 @@ let rec exec t ~ectx ~dir ~env ~stdout_to ~stderr_to ~stdin_from =
   | Ignore (outputs, t) ->
     redirect_out ~ectx ~dir outputs Config.dev_null t ~env ~stdout_to
       ~stderr_to ~stdin_from
-  | Progn l -> exec_list l ~ectx ~dir ~env ~stdout_to ~stderr_to ~stdin_from
-  | Echo strs -> exec_echo stdout_to (String.concat strs ~sep:" ")
+  | Progn l ->
+    exec_list l ~ectx ~dir ~env ~stdout_to ~stderr_to ~stdin_from
+      ~deps_acc:Dep.Set.empty
+  | Echo strs ->
+    let+ () = exec_echo stdout_to (String.concat strs ~sep:" ") in
+    Done
   | Cat fn ->
     Io.with_file_in fn ~f:(fun ic ->
       Io.copy_channels ic (Process.Io.out_channel stdout_to));
-    Fiber.return ()
+    Fiber.return Done
   | Copy (src, dst) ->
     let dst = Path.build dst in
     Io.copy_file ~src ~dst ();
-    Fiber.return ()
+    Fiber.return Done
   | Symlink (src, dst) ->
     ( if Sys.win32 then
       let dst = Path.build dst in
@@ -87,7 +98,7 @@ let rec exec t ~ectx ~dir ~env ~stdout_to ~stderr_to ~stdin_from =
           Unix.symlink src dst
         )
       | exception _ -> Unix.symlink src dst );
-    Fiber.return ()
+    Fiber.return Done
   | Copy_and_add_line_directive (src, dst) ->
     Io.with_file_in src ~f:(fun ic ->
       Path.build dst
@@ -96,7 +107,7 @@ let rec exec t ~ectx ~dir ~env ~stdout_to ~stderr_to ~stdin_from =
         output_string oc
           (Utils.line_directive ~filename:(Path.to_string fn) ~line_number:1);
         Io.copy_channels ic oc));
-    Fiber.return ()
+    Fiber.return Done
   | System cmd ->
     let path, arg =
       Utils.system_shell_exn ~needed_to:"interpret (system ...) actions"
@@ -108,20 +119,20 @@ let rec exec t ~ectx ~dir ~env ~stdout_to ~stderr_to ~stdin_from =
       [ "-e"; "-u"; "-o"; "pipefail"; "-c"; cmd ]
   | Write_file (fn, s) ->
     Io.write_file (Path.build fn) s;
-    Fiber.return ()
+    Fiber.return Done
   | Rename (src, dst) ->
     Unix.rename (Path.Build.to_string src) (Path.Build.to_string dst);
-    Fiber.return ()
+    Fiber.return Done
   | Remove_tree path ->
     Path.rm_rf (Path.build path);
-    Fiber.return ()
+    Fiber.return Done
   | Mkdir path ->
     if Path.is_in_build_dir path then
       Path.mkdir_p path
     else
       Code_error.raise "Action_exec.exec: mkdir on non build dir"
         [ ("path", Path.to_dyn path) ];
-    Fiber.return ()
+    Fiber.return Done
   | Digest_files paths ->
     let s =
       let data =
@@ -130,7 +141,8 @@ let rec exec t ~ectx ~dir ~env ~stdout_to ~stderr_to ~stdin_from =
       in
       Digest.generic data
     in
-    exec_echo stdout_to (Digest.to_string_raw s)
+    let+ () = exec_echo stdout_to (Digest.to_string_raw s) in
+    Done
   | Diff ({ optional; file1; file2; mode } as diff) ->
     let remove_intermediate_file () =
       if optional then
@@ -138,48 +150,51 @@ let rec exec t ~ectx ~dir ~env ~stdout_to ~stderr_to ~stdin_from =
     in
     if Diff.eq_files diff then (
       remove_intermediate_file ();
-      Fiber.return ()
+      Fiber.return Done
     ) else
       let is_copied_from_source_tree file =
         match Path.extract_build_context_dir_maybe_sandboxed file with
         | None -> false
         | Some (_, file) -> Path.exists (Path.source file)
       in
-      Fiber.finalize
-        (fun () ->
-          if mode = Binary then
-            User_error.raise
-              [ Pp.textf "Files %s and %s differ."
-                (Path.to_string_maybe_quoted file1)
-                  (Path.to_string_maybe_quoted file2)
-              ]
-          else
-            Print_diff.print file1 file2
-              ~skip_trailing_cr:(mode = Text && Sys.win32))
-        ~finally:(fun () ->
-          ( match optional with
-          | false ->
-            if
-              is_copied_from_source_tree file1
-              && not (is_copied_from_source_tree file2)
-            then
-              Promotion.File.register_dep
-                ~source_file:
-                  (snd
-                    (Option.value_exn
-                      (Path.extract_build_context_dir_maybe_sandboxed file1)))
-                ~correction_file:(Path.as_in_build_dir_exn file2)
-          | true ->
-            if is_copied_from_source_tree file1 then
-              Promotion.File.register_intermediate
-                ~source_file:
-                  (snd
-                    (Option.value_exn
-                      (Path.extract_build_context_dir_maybe_sandboxed file1)))
-                ~correction_file:(Path.as_in_build_dir_exn file2)
+      let+ () =
+        Fiber.finalize
+          (fun () ->
+            if mode = Binary then
+              User_error.raise
+                [ Pp.textf "Files %s and %s differ."
+                  (Path.to_string_maybe_quoted file1)
+                    (Path.to_string_maybe_quoted file2)
+                ]
             else
-              remove_intermediate_file () );
-          Fiber.return ())
+              Print_diff.print file1 file2
+                ~skip_trailing_cr:(mode = Text && Sys.win32))
+          ~finally:(fun () ->
+            ( match optional with
+            | false ->
+              if
+                is_copied_from_source_tree file1
+                && not (is_copied_from_source_tree file2)
+              then
+                Promotion.File.register_dep
+                  ~source_file:
+                    (snd
+                      (Option.value_exn
+                        (Path.extract_build_context_dir_maybe_sandboxed file1)))
+                  ~correction_file:(Path.as_in_build_dir_exn file2)
+            | true ->
+              if is_copied_from_source_tree file1 then
+                Promotion.File.register_intermediate
+                  ~source_file:
+                    (snd
+                      (Option.value_exn
+                        (Path.extract_build_context_dir_maybe_sandboxed file1)))
+                  ~correction_file:(Path.as_in_build_dir_exn file2)
+              else
+                remove_intermediate_file () );
+            Fiber.return ())
+      in
+      Done
   | Merge_files_into (sources, extras, target) ->
     let lines =
       List.fold_left
@@ -191,7 +206,7 @@ let rec exec t ~ectx ~dir ~env ~stdout_to ~stderr_to ~stdin_from =
     in
     let target = Path.build target in
     Io.write_lines target (String.Set.to_list lines);
-    Fiber.return ()
+    Fiber.return Done
 
 and redirect_out outputs fn t ~ectx ~dir ~env ~stdout_to ~stderr_to ~stdin_from
   =
@@ -203,7 +218,9 @@ and redirect_out outputs fn t ~ectx ~dir ~env ~stdout_to ~stderr_to ~stdin_from
     | Outputs -> (out, out)
   in
   exec t ~ectx ~dir ~env ~stdout_to ~stderr_to ~stdin_from
-  >>| fun () -> Process.Io.release out
+  >>| fun result ->
+  Process.Io.release out;
+  result
 
 and redirect_in inputs fn t ~ectx ~dir ~env ~stdout_to ~stderr_to ~stdin_from:_
   =
@@ -213,20 +230,27 @@ and redirect_in inputs fn t ~ectx ~dir ~env ~stdout_to ~stderr_to ~stdin_from:_
     | Stdin -> in_
   in
   exec t ~ectx ~dir ~env ~stdout_to ~stderr_to ~stdin_from
-  >>| fun () -> Process.Io.release in_
+  >>| fun result ->
+  Process.Io.release in_;
+  result
 
-and exec_list l ~ectx ~dir ~env ~stdout_to ~stderr_to ~stdin_from =
+and exec_list l ~ectx ~dir ~env ~stdout_to ~stderr_to ~stdin_from ~deps_acc =
   match l with
-  | [] -> Fiber.return ()
+  | [] -> Fiber.return Done
   | [ t ] -> exec t ~ectx ~dir ~env ~stdout_to ~stderr_to ~stdin_from
   | t :: rest ->
-    let* () =
+    let* done_or_deps =
       let stdout_to = Process.Io.multi_use stdout_to in
       let stderr_to = Process.Io.multi_use stderr_to in
       let stdin_from = Process.Io.multi_use stdin_from in
       exec t ~ectx ~dir ~env ~stdout_to ~stderr_to ~stdin_from
     in
-    exec_list rest ~ectx ~dir ~env ~stdout_to ~stderr_to ~stdin_from
+    let deps_acc =
+      match done_or_deps with
+      | Done -> deps_acc
+      | Need_more_deps deps -> Dep.Set.union deps_acc deps
+    in
+    exec_list rest ~ectx ~dir ~env ~stdout_to ~stderr_to ~stdin_from ~deps_acc
 
 let exec ~targets ~context ~env t =
   let env =
