@@ -1,4 +1,5 @@
 open Stdune
+module Protocol = Protocol
 
 type 'a t
 

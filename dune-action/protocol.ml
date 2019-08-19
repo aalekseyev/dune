@@ -24,7 +24,7 @@ end
 let is_run_by_dune () =
   Sys.getenv_opt dune_action_env_variable |> Option.is_some
 
-let serialize_deps _deps = failwith ""
+let serialize_deps _deps = failwith "unimplemented"
 
 let wait_for_dependencies deps =
   let pipes = Sys.getenv dune_action_env_variable in

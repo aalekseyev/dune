@@ -36,6 +36,8 @@ let exec_run ~ectx ~dir ~env ~stdout_to ~stderr_to ~stdin_from prog args =
   Process.run Strict ~dir ~env ~stdout_to ~stderr_to ~stdin_from
     ~purpose:ectx.purpose prog args
 
+(* TODO jstaron: This is copy-paste from above. Remove duplication. *)
+
 let exec_run_dynamic_client ~ectx ~dir ~env ~stdout_to ~stderr_to ~stdin_from
   prog args =
   ( match ectx.context with
@@ -57,13 +59,23 @@ let exec_run_dynamic_client ~ectx ~dir ~env ~stdout_to ~stderr_to ~stdin_from
     in
     invalid_prefix (Path.relative Path.build_dir target.name);
     invalid_prefix (Path.relative Path.build_dir ("install/" ^ target.name)) );
-  (* TODO jstaron: Set up communitcation with client library. *)
-  (* TODO jstaron: Handle communication, detect if dependency is provided. *)
-  let+ () =
+  let run_in_dune_fn = Filename.temp_file "" ".run_in_dune" in
+  let response_fn = Filename.temp_file "" ".response" in
+  let env =
+    let value = String.concat ~sep:":" [ run_in_dune_fn; response_fn ] in
+    Env.add env ~var:Dune_action.Protocol.For_dune.dune_action_env_variable
+      ~value:serialized
+  in
+  let* () =
     Process.run Strict ~dir ~env ~stdout_to ~stderr_to ~stdin_from
       ~purpose:ectx.purpose prog args
   in
-  failwith "HERE GOES INFO REVEIVED FROM CLIENT"
+  if not (File.exists response_fn) then
+    (* TODO jstaron: Pass info about rule and raise User_error here. *)
+    failwith "DUNE ACTION CLIENT DIDN'T RESPOND";
+  let response = Io.read_file (Path.of_string response_fn) in
+  (* TODO jstaron: Parse response and build deps, rerun if needed. *)
+  failwith "PARSE RESPONSE"
 
 let exec_echo stdout_to str =
   Fiber.return (output_string (Process.Io.out_channel stdout_to) str)

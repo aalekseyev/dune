@@ -1,5 +1,6 @@
 open Stdune
 open Protocol
+module Protocol = Protocol
 
 let ( >>> ) f g x = g (f x)
 
