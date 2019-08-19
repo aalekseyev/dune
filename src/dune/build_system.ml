@@ -1340,6 +1340,18 @@ end = struct
       | exception Unix.Unix_error (ENOENT, _, _) -> ()
       | () -> () )
 
+  (* TODO jstaron: What about registering dynamic deps? *)
+  let execute_action_until_all_deps_ready ~context ~env ~targets action =
+    let rec loop () =
+      let* result = Action_exec.exec ~context ~env ~targets action in
+      match result with
+      | Done -> Fiber.return ()
+      | Need_more_deps deps ->
+        let* () = build_deps deps in
+        loop ()
+    in
+    loop ()
+
   let execute_rule_impl rule =
     let t = t () in
     let { Internal_rule.dir
@@ -1408,6 +1420,7 @@ end = struct
       !Clflags.force
       && List.exists targets_as_list ~f:Path.Build.is_alias_stamp_file
     in
+    (* TODO jstaron: Take previous dynamic dependencies into digest. *)
     let something_changed =
       match (prev_trace, targets_digest, Dep.Set.has_universe deps) with
       | Some prev_trace, Some targets_digest, false ->
@@ -1444,8 +1457,8 @@ end = struct
         let+ () =
           with_locks locks ~f:(fun () ->
             Fiber.map
-              (Action_exec.exec ~context ~env ~targets action)
-              (* TODO jstaron: Implement rerunning. *) ~f:(fun _ ->
+              (execute_action_until_all_deps_ready ~context ~env ~targets
+                action) ~f:(fun _ ->
                 match sandboxed with
                 | None -> ()
                 | Some sandboxed ->
