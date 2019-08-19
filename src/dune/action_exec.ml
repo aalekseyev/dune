@@ -33,11 +33,37 @@ let exec_run ~ectx ~dir ~env ~stdout_to ~stderr_to ~stdin_from prog args =
     in
     invalid_prefix (Path.relative Path.build_dir target.name);
     invalid_prefix (Path.relative Path.build_dir ("install/" ^ target.name)) );
+  Process.run Strict ~dir ~env ~stdout_to ~stderr_to ~stdin_from
+    ~purpose:ectx.purpose prog args
+
+let exec_run_dynamic_client ~ectx ~dir ~env ~stdout_to ~stderr_to ~stdin_from
+  prog args =
+  ( match ectx.context with
+  | None
+   |Some { Context.for_host = None; _ } ->
+    ()
+  | Some ({ Context.for_host = Some host; _ } as target) ->
+    let invalid_prefix prefix =
+      match Path.descendant prog ~of_:prefix with
+      | None -> ()
+      | Some _ ->
+        User_error.raise
+          [ Pp.textf "Context %s has a host %s." target.name host.name
+          ; Pp.textf "It's not possible to execute binary %s in it."
+            (Path.to_string_maybe_quoted prog)
+          ; Pp.nop
+          ; Pp.text "This is a bug and should be reported upstream."
+          ]
+    in
+    invalid_prefix (Path.relative Path.build_dir target.name);
+    invalid_prefix (Path.relative Path.build_dir ("install/" ^ target.name)) );
+  (* TODO jstaron: Set up communitcation with client library. *)
+  (* TODO jstaron: Handle communication, detect if dependency is provided. *)
   let+ () =
     Process.run Strict ~dir ~env ~stdout_to ~stderr_to ~stdin_from
       ~purpose:ectx.purpose prog args
   in
-  empty_done
+  failwith "HERE GOES INFO REVEIVED FROM CLIENT"
 
 let exec_echo stdout_to str =
   Fiber.return (output_string (Process.Io.out_channel stdout_to) str)
@@ -46,10 +72,14 @@ let rec exec t ~ectx ~dir ~env ~stdout_to ~stderr_to ~stdin_from =
   match (t : Action.t) with
   | Run (Error e, _) -> Action.Prog.Not_found.raise e
   | Run (Ok prog, args) ->
-    exec_run ~ectx ~dir ~env ~stdout_to ~stderr_to ~stdin_from prog args
+    let+ () =
+      exec_run ~ectx ~dir ~env ~stdout_to ~stderr_to ~stdin_from prog args
+    in
+    empty_done
   | Run_dynamic (Error e, _) -> Action.Prog.Not_found.raise e
-  (* TODO jstaron: Implement below. *)
-  | Run_dynamic (Ok _prog, _args) -> failwith "ACTION EXEC RUN DYNAMIC"
+  | Run_dynamic (Ok prog, args) ->
+    exec_run_dynamic_client ~ectx ~dir ~env ~stdout_to ~stderr_to ~stdin_from
+      prog args
   | Chdir (dir, t) -> exec t ~ectx ~dir ~env ~stdout_to ~stderr_to ~stdin_from
   | Setenv (var, value, t) ->
     exec t ~ectx ~dir ~stdout_to ~stderr_to ~stdin_from
@@ -115,11 +145,18 @@ let rec exec t ~ectx ~dir ~env ~stdout_to ~stderr_to ~stdin_from =
     let path, arg =
       Utils.system_shell_exn ~needed_to:"interpret (system ...) actions"
     in
-    exec_run ~ectx ~dir ~env ~stdout_to ~stderr_to ~stdin_from path [ arg; cmd ]
+    let+ () =
+      exec_run ~ectx ~dir ~env ~stdout_to ~stderr_to ~stdin_from path
+        [ arg; cmd ]
+    in
+    empty_done
   | Bash cmd ->
-    exec_run ~ectx ~dir ~env ~stdout_to ~stderr_to ~stdin_from
-      (Utils.bash_exn ~needed_to:"interpret (bash ...) actions")
-      [ "-e"; "-u"; "-o"; "pipefail"; "-c"; cmd ]
+    let+ () =
+      exec_run ~ectx ~dir ~env ~stdout_to ~stderr_to ~stdin_from
+        (Utils.bash_exn ~needed_to:"interpret (bash ...) actions")
+        [ "-e"; "-u"; "-o"; "pipefail"; "-c"; cmd ]
+    in
+    empty_done
   | Write_file (fn, s) ->
     Io.write_file (Path.build fn) s;
     Fiber.return empty_done
