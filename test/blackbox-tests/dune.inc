@@ -1363,6 +1363,14 @@
    (progn (run %{exe:cram.exe} -test run.t) (diff? run.t run.t.corrected)))))
 
 (alias
+ (name run-dynamic)
+ (deps (package dune) (source_tree test-cases/run-dynamic))
+ (action
+  (chdir
+   test-cases/run-dynamic
+   (progn (run %{exe:cram.exe} -test run.t) (diff? run.t run.t.corrected)))))
+
+(alias
  (name sandboxing)
  (deps (package dune) (source_tree test-cases/sandboxing))
  (action
@@ -1869,6 +1877,7 @@
   (alias reporting-of-cycles)
   (alias rule-target-external)
   (alias rule-target-inferrence)
+  (alias run-dynamic)
   (alias sandboxing)
   (alias scope-bug)
   (alias scope-ppx-bug)
@@ -2053,6 +2062,7 @@
   (alias reporting-of-cycles)
   (alias rule-target-external)
   (alias rule-target-inferrence)
+  (alias run-dynamic)
   (alias sandboxing)
   (alias scope-bug)
   (alias select)
