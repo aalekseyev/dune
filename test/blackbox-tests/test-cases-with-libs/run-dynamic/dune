@@ -1,0 +1,16 @@
+(data_only_dirs test)
+
+(alias
+ (name run_dynamic)
+ (deps
+   (package dune) (source_tree test/)
+   bin/foo.exe
+   )
+ (action
+  (chdir
+   test
+   (progn (run %{exe:cram.exe} -test run.t) (diff? run.t run.t.corrected)))))
+
+(alias
+ (name runtest)
+ (deps (alias run_dynamic)))
