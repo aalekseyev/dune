@@ -56,6 +56,8 @@ module Dir : sig
   val project : t -> Dune_project.t
 
   val to_dyn : t -> Dyn.t
+
+  val has_rules_for_subdirs : t -> bool
 end
 
 (** [set source ~ancestor_vcs ~recognize_jbuilder_projects] set the root, the

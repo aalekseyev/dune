@@ -36,6 +36,7 @@ module Dune_file = struct
     type t =
       { path : Path.Source.t
       ; sub_dirs : Predicate_lang.Glob.t Sub_dirs.Status.Map.t
+      ; has_rules_for_subdirs : bool
       ; mutable sexps : Dune_lang.Ast.t list
       }
 
@@ -59,6 +60,10 @@ module Dune_file = struct
     | Some (Ocaml_script _) ->
       Sub_dirs.default
 
+  let has_rules_for_subdirs = function
+    | Some (Plain p) -> p.has_rules_for_subdirs
+    | None | Some (Ocaml_script _) -> false
+
   let path = function
     | Plain x -> x.path
     | Ocaml_script p -> p
@@ -72,11 +77,11 @@ module Dune_file = struct
           let decoder =
             Dune_project.set_parsing_context project Sub_dirs.decode
           in
-          let sub_dirs, sexps =
+          let (sub_dirs, `Has_rules_for_subdirs has_rules_for_subdirs), sexps =
             Dune_lang.Decoder.parse decoder Univ_map.empty
               (Dune_lang.Ast.List (Loc.none, sexps))
           in
-          Plain { path = file; sexps; sub_dirs })
+          Plain { path = file; sexps; sub_dirs; has_rules_for_subdirs })
 end
 
 module Readdir : sig
@@ -174,6 +179,7 @@ module Dir0 = struct
     ; contents : contents
     ; project : Dune_project.t
     ; vcs : Vcs.t option
+    ; has_rules_for_subdirs : bool
     }
 
   and contents =
@@ -191,13 +197,14 @@ module Dir0 = struct
         Memo.Cell.t
     }
 
-  let rec to_dyn { path; status; contents; project = _; vcs } =
+  let rec to_dyn { path; status; contents; project = _; vcs; has_rules_for_subdirs } =
     let open Dyn in
     Record
       [ ("path", Path.Source.to_dyn path)
       ; ("status", Sub_dirs.Status.to_dyn status)
       ; ("contents", dyn_of_contents contents)
       ; ("vcs", Dyn.Encoder.option Vcs.to_dyn vcs)
+      ; ("has_rules_for_subdirs", Dyn.Bool has_rules_for_subdirs)
       ]
 
   and dyn_of_sub_dir { sub_dir_status; sub_dir_as_t } =
@@ -221,8 +228,8 @@ module Dir0 = struct
     let create ~files ~sub_dirs ~dune_file = { files; sub_dirs; dune_file }
   end
 
-  let create ~project ~path ~status ~contents ~vcs =
-    { path; status; contents; project; vcs }
+  let create ~project ~path ~status ~contents ~vcs ~has_rules_for_subdirs =
+    { path; status; contents; project; vcs; has_rules_for_subdirs }
 
   let contents t = t.contents
 
@@ -253,6 +260,8 @@ module Dir0 = struct
   let sub_dir_paths t =
     String.Map.foldi (sub_dirs t) ~init:Path.Source.Set.empty ~f:(fun s _ acc ->
         Path.Source.Set.add acc (Path.Source.relative t.path s))
+
+  let has_rules_for_subdirs t = t.has_rules_for_subdirs
 end
 
 module Settings : sig
@@ -386,10 +395,11 @@ end = struct
       )
     in
     let sub_dirs = Dune_file.sub_dirs dune_file in
+    let has_rules_for_subdirs = Dune_file.has_rules_for_subdirs dune_file in
     let dirs_visited, sub_dirs =
       get_sub_dirs ~dirs_visited ~dirs ~sub_dirs ~dir_status
     in
-    (Dir0.Contents.create ~files ~sub_dirs ~dune_file, dirs_visited)
+    (Dir0.Contents.create ~files ~sub_dirs ~dune_file, has_rules_for_subdirs, dirs_visited)
 
   let root () =
     let settings = Settings.get () in
@@ -415,10 +425,10 @@ end = struct
     in
     let vcs = settings.ancestor_vcs in
     let dirs_visited = File.Map.singleton (File.of_source_path path) path in
-    let contents, visited =
+    let contents, has_rules_for_subdirs, visited =
       contents readdir ~dirs_visited ~project ~path ~dir_status
     in
-    let dir = Dir0.create ~project ~path ~status:dir_status ~contents ~vcs in
+    let dir = Dir0.create ~project ~path ~status:dir_status ~contents ~vcs ~has_rules_for_subdirs in
     { Output.dir; visited }
 
   let get_vcs ~default:vcs ~path ~readdir:{ Readdir.files; dirs } =
@@ -465,10 +475,11 @@ end = struct
             ~default:parent_dir.project
       in
       let vcs = get_vcs ~default:parent_dir.vcs ~readdir ~path in
-      let contents, visited =
+      let contents, has_rules_for_subdirs, visited =
         contents readdir ~dirs_visited ~project ~path ~dir_status
       in
-      let dir = Dir0.create ~project ~path ~status:dir_status ~contents ~vcs in
+      let has_rules_for_subdirs = has_rules_for_subdirs || parent_dir.has_rules_for_subdirs in
+      let dir = Dir0.create ~project ~path ~status:dir_status ~contents ~vcs ~has_rules_for_subdirs in
       Some { Output.dir; visited }
 
   let find_dir_raw =

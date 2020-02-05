@@ -47,5 +47,5 @@ val eval : Predicate_lang.Glob.t Status.Map.t -> dirs:string list -> status_map
 val status : status_map -> dir:string -> Status.Or_ignored.t
 
 val decode :
-  (Predicate_lang.Glob.t Status.Map.t * Dune_lang.Ast.t list)
+  ((Predicate_lang.Glob.t Status.Map.t * [ `Has_rules_for_subdirs of bool ]) * Dune_lang.Ast.t list)
   Dune_lang.Decoder.t

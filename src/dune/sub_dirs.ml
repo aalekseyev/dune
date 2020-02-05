@@ -67,14 +67,14 @@ let default =
   ; vendored = Predicate_lang.empty
   }
 
-let make ~dirs ~data_only ~ignored_sub_dirs ~vendored_dirs =
+let make ~dirs ~data_only ~ignored_sub_dirs ~vendored_dirs ~has_rules_for_subdirs =
   let normal = Option.value dirs ~default:default.normal in
   let data_only =
     let data_only = Option.value data_only ~default:default.data_only in
     Predicate_lang.union (data_only :: ignored_sub_dirs)
   in
   let vendored = Option.value vendored_dirs ~default:default.vendored in
-  { Status.Map.normal; data_only; vendored }
+  { Status.Map.normal; data_only; vendored }, `Has_rules_for_subdirs has_rules_for_subdirs
 
 type status_map = Status.t String.Map.t
 
@@ -154,8 +154,10 @@ let decode =
     let+ dirs = field_o "dirs" (located plang)
     and+ data_only = field_o "data_only_dirs" (located plang)
     and+ ignored_sub_dirs = multi_field "ignored_subdirs" ignored_sub_dirs
+    and+ has_rules_for_subdirs = field_o "has_rules_for_subdirs" Dune_lang.Decoder.bool
     and+ vendored_dirs = field_o "vendored_dirs" vendored_dirs
     and+ rest = leftover_fields in
+    let has_rules_for_subdirs = Option.value has_rules_for_subdirs ~default:false in
     match (data_only, dirs, ignored_sub_dirs) with
     | None, Some (loc, _), _ :: _ ->
       User_error.raise ~loc
@@ -172,6 +174,6 @@ let decode =
       let dirs = Option.map ~f:snd dirs in
       let data_only = Option.map ~f:snd data_only in
       let vendored_dirs = Option.map ~f:snd vendored_dirs in
-      (make ~dirs ~data_only ~ignored_sub_dirs ~vendored_dirs, rest)
+      (make ~dirs ~data_only ~ignored_sub_dirs ~vendored_dirs ~has_rules_for_subdirs, rest)
   in
   enter (fields decode)
