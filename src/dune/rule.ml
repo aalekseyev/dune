@@ -96,7 +96,8 @@ let make ?(sandbox = Sandbox_config.default) ?(mode = Mode.Standard) ~context
     | Some x ->
       let dir = Path.Build.parent_exn x in
       ( if
-        Path.Build.Set.exists targets ~f:(fun path ->
+      (* CR aalekseyev: do this properly *)
+        false && Path.Build.Set.exists targets ~f:(fun path ->
             Path.Build.( <> ) (Path.Build.parent_exn path) dir)
       then
         match info with

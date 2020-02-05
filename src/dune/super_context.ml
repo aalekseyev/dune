@@ -715,7 +715,17 @@ module Action = struct
     in
     let targets = Path.Build.Set.to_list targets in
     List.iter targets ~f:(fun target ->
-        if Path.Build.( <> ) (Path.Build.parent_exn target) targets_dir then
+        if not (Path.Build.is_descendant ~of_:targets_dir target) then
+        User_error.raise ~loc
+            [ Pp.text
+                "This action has targets in a different directory than the \
+                 current one, this is not allowed by dune at the moment:"
+            ; Pp.enumerate targets ~f:(fun target ->
+                  Pp.text (Dpath.describe_path (Path.build target)))
+            ]
+        else
+        if (* CR aalekseyev: do it properly *) false 
+        then
           User_error.raise ~loc
             [ Pp.text
                 "This action has targets in a different directory than the \

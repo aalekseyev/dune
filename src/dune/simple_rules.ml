@@ -39,7 +39,8 @@ let check_filename =
       User_error.raise ~loc:error_loc
         [ Pp.text "'.' and '..' are not valid filenames" ]
     | String s ->
-      if Filename.dirname s <> Filename.current_dir_name then
+      (* CR aalekseyev: do this properly *)
+      if false && Filename.dirname s <> Filename.current_dir_name then
         not_in_dir ~error_loc s;
       Path.Build.relative ~error_loc dir s
     | Path p ->

@@ -1684,6 +1684,14 @@
    (progn (run %{exe:cram.exe} -test run.t) (diff? run.t run.t.corrected)))))
 
 (rule
+ (alias rules-in-subdir)
+ (deps (package dune) (source_tree test-cases/rules-in-subdir))
+ (action
+  (chdir
+   test-cases/rules-in-subdir
+   (progn (run %{exe:cram.exe} -test run.t) (diff? run.t run.t.corrected)))))
+
+(rule
  (alias sandboxing)
  (deps (package dune) (source_tree test-cases/sandboxing))
  (action
@@ -2321,6 +2329,7 @@
   (alias reporting-of-cycles)
   (alias rule-target-external)
   (alias rule-target-inferrence)
+  (alias rules-in-subdir)
   (alias sandboxing)
   (alias scope-bug)
   (alias scope-ppx-bug)
@@ -2550,6 +2559,7 @@
   (alias reporting-of-cycles)
   (alias rule-target-external)
   (alias rule-target-inferrence)
+  (alias rules-in-subdir)
   (alias sandboxing)
   (alias scope-bug)
   (alias select)
