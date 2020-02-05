@@ -137,8 +137,10 @@ end
 include T
 
 let singleton_rule (rule : Rule.t) =
-  let dir = rule.dir in
-  Path.Build.Map.singleton dir (Dir_rules.Nonempty.singleton (Rule rule))
+  let dirs = Rule.target_dirs rule in
+  let v = (Dir_rules.Nonempty.singleton (Rule rule)) in
+  Path.Build.Map.of_list_reduce ~f:(fun x x' -> assert (x == x'); x) 
+    (List.map (Path.Build.Set.to_list dirs) ~f:(fun k -> (k, v))) 
 
 let implicit_output = Memo.Implicit_output.add (module T)
 

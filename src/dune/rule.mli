@@ -64,7 +64,8 @@ type t = private
   ; mode : Mode.t
   ; locks : Path.t list
   ; info : Info.t
-  ; (* Directory where all the targets are produced. *) dir : Path.Build.t
+  ; (* Directory where the rule is defined. All the targets targets are produced here or in its descendants. *) 
+  dir : Path.Build.t
   }
 
 module Set : Set.S with type elt = t
@@ -85,6 +86,10 @@ val make :
   -> dir:Path.Build.t
   -> Action.t Build.With_targets.t
   -> t
+
+(** Returns the list of all directories where this rule defines some targets.
+  In the common case, this is a singleton list that contains just the [dir]. *)
+val target_dirs : t -> Path.Build.Set.t
 
 val with_prefix : t -> build:unit Build.t -> t
 

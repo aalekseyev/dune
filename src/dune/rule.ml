@@ -163,3 +163,7 @@ let shim_of_build_goal request =
   ; locks = []
   ; info = Info.Internal
   }
+
+let target_dirs (t : t) = 
+  Path.Build.Set.map t.action.targets 
+    ~f:(fun target -> Path.Build.parent_exn target)

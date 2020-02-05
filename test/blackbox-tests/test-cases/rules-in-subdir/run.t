@@ -9,10 +9,14 @@
 
   $ dune build _build/default/foo/y
   $ cat _build/default/x
+  hello
   $ cat _build/default/foo/y
+  world
 
   $ rm -r _build
 
   $ dune build _build/default/x
   $ cat _build/default/x
+  hello
   $ cat _build/default/foo/y
+  world

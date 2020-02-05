@@ -571,9 +571,10 @@ end = struct
 
   let compile_rules ~dir rules =
     List.concat_map rules ~f:(fun rule ->
-        assert (Path.Build.( = ) dir rule.Rule.dir);
-        List.map (Path.Build.Set.to_list rule.action.targets) ~f:(fun target ->
-            (target, rule)))
+        (* CR aalekseyev: do this properly *)
+        assert (Path.Build.Set.mem (Rule.target_dirs rule) dir);
+        List.filter_map (Path.Build.Set.to_list rule.action.targets) ~f:(fun target ->
+          if Path.Build.(=) dir (Path.Build.parent_exn target) then Some (target, rule) else None))
     |> Path.Build.Map.of_list_reducei ~f:report_rule_conflict
 
   (* Here we are doing a O(log |S|) lookup in a set S of files in the build
@@ -1271,16 +1272,18 @@ end = struct
 
   let execute_rule_impl rule =
     let t = t () in
-    let { Rule.id = _; dir; env = _; context; mode; locks; action; info } =
+    let { Rule.id = _; dir = initial_cwd; env = _; context; mode; locks; action; info } =
       rule
     in
+    let target_dirs = Rule.target_dirs rule in
     start_rule t rule;
     let targets = action.targets in
     let targets_as_list = Path.Build.Set.to_list targets in
     let head_target = List.hd targets_as_list in
     let* action, deps = evaluate_rule_and_wait_for_dependencies rule in
     Stats.new_evaluated_rule ();
-    Fs.mkdir_p dir;
+    Path.Build.Set.iter target_dirs ~f:Fs.mkdir_p;
+    Fs.mkdir_p initial_cwd;
     let env = Rule.effective_env rule in
     let rule_loc = Rule.loc rule in
     let is_action_dynamic = Action.is_dynamic action in
@@ -1421,7 +1424,8 @@ end = struct
                      match Path.as_in_build_dir path with
                      | None -> Fs.assert_exists ~loc path
                      | Some path -> Fs.mkdir_p (sandboxed path));
-              Fs.mkdir_p (sandboxed dir);
+              Fs.mkdir_p (sandboxed initial_cwd);
+              Path.Build.Set.iter target_dirs ~f:(fun x -> Fs.mkdir_p (sandboxed x));
               ( Some sandboxed
               , Action.sandbox action ~sandboxed ~mode:sandbox_mode ~deps
                   ~eval_pred )
@@ -1535,7 +1539,7 @@ end = struct
               | None -> true
               | Some pred ->
                 Predicate_lang.Glob.exec pred
-                  (Path.reach (Path.build path) ~from:(Path.build dir))
+                  (Path.reach (Path.build path) ~from:(Path.build initial_cwd))
                   ~standard:Predicate_lang.any
             in
             match consider_for_promotion with
