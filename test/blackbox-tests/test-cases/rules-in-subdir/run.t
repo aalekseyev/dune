@@ -4,7 +4,15 @@
   > EOF
   $ cat >dune <<EOF
   > (has_rules_for_subdirs true)
-  > (rule (targets foo/x y) (action (progn (with-stdout-to foo/x (echo hi)) (with-stdout-to y (echo bye)))))
+  > (rule (targets x foo/y) (action (progn (with-stdout-to x (echo hello)) (with-stdout-to foo/y (echo world)))))
   > EOF
 
-  $ dune build _build/default/foo/x
+  $ dune build _build/default/foo/y
+  $ cat _build/default/x
+  $ cat _build/default/foo/y
+
+  $ rm -r _build
+
+  $ dune build _build/default/x
+  $ cat _build/default/x
+  $ cat _build/default/foo/y
