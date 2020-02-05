@@ -566,7 +566,8 @@ end = struct
            (* There's an [assert false] in [prepare_managed_paths] that blows up
               if we try to sandbox this. *)
              ~sandbox:Sandbox_config.no_sandboxing build ~context:None ~env:None
-             ~info:Source_file_copy)
+             ~info:Source_file_copy
+             ~dir:ctx_dir)
 
   let compile_rules ~dir rules =
     List.concat_map rules ~f:(fun rule ->
@@ -659,6 +660,7 @@ end = struct
                 in
                 let rule =
                   Rule.make ~locks ~context:(Some context) ~env
+                    ~dir:alias_dir
                     ~info:(Rule.Info.of_loc_opt loc)
                     (Build.progn [ action; Build.create_file path ])
                 in
@@ -670,6 +672,7 @@ end = struct
             Path.Build.extend_basename base_path ~suffix:Alias0.suffix
           in
           Rule.make ~context:None ~env:None
+            ~dir:alias_dir
             (let action =
                let+ () = Build.path_set deps
                and+ dyn_deps = Build.dyn_path_set_reuse dyn_deps in

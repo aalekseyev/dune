@@ -244,7 +244,7 @@ let make_rule t ?sandbox ?mode ?locks ?loc ~dir build =
   let build = chdir_to_build_context_root t build in
   let env = Env.external_ t.env_context ~dir in
   Rule.make ?sandbox ?mode ?locks ~info:(Rule.Info.of_loc_opt loc)
-    ~context:(Some t.context) ~env:(Some env) build
+    ~context:(Some t.context) ~env:(Some env) ~dir build
 
 let add_rule t ?sandbox ?mode ?locks ?loc ~dir build =
   let rule = make_rule t ?sandbox ?mode ?locks ?loc ~dir build in

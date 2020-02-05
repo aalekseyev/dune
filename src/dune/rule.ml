@@ -79,7 +79,7 @@ module O = Comparable.Make (T)
 module Set = O.Set
 
 let make ?(sandbox = Sandbox_config.default) ?(mode = Mode.Standard) ~context
-    ~env ?(locks = []) ?(info = Info.Internal) action =
+    ~env ?(locks = []) ?(info = Info.Internal) ~dir action =
   let open Build.With_targets.O in
   let action =
     Build.With_targets.memoize "Rule.make"
@@ -93,8 +93,7 @@ let make ?(sandbox = Sandbox_config.default) ?(mode = Mode.Standard) ~context
       | From_dune_file loc ->
         User_error.raise ~loc [ Pp.text "Rule has no targets specified" ]
       | _ -> Code_error.raise "Build_interpret.Rule.make: no targets" [] )
-    | Some x ->
-      let dir = Path.Build.parent_exn x in
+    | Some _ ->
       ( if
       (* CR aalekseyev: do this properly *)
         false && Path.Build.Set.exists targets ~f:(fun path ->

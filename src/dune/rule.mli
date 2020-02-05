@@ -82,6 +82,7 @@ val make :
   -> env:Env.t option
   -> ?locks:Path.t list
   -> ?info:Info.t
+  -> dir:Path.Build.t
   -> Action.t Build.With_targets.t
   -> t
 
