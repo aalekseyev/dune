@@ -844,6 +844,25 @@ end = struct
       in
       Rules.collect (fun () -> gen_rules ~dir (Path.Source.explode sub_dir))
     in
+    let file_tree_dir =
+      match context_name with
+      | Install _ -> None
+      | Context _ -> File_tree.find_dir sub_dir
+    in
+    let rules_from_parent = match file_tree_dir with
+      | None -> None
+      | Some src_dir -> match File_tree.Dir.has_rules_for_subdirs src_dir with
+        | false -> None
+        | true ->
+          let result = load_dir ~dir:(Path.build (Path.Build.parent_exn dir)) in
+          match result with
+          | Build result -> Some result.rules_produced
+          | Non_build _ -> None
+    in
+    let rules_produced = match rules_from_parent with
+      | None -> rules_produced
+      | Some rules_from_parent -> Rules.union rules_produced rules_from_parent 
+    in
     let rules =
       let dir = Path.build dir in
       Rules.Dir_rules.union
@@ -857,11 +876,6 @@ end = struct
       | Context context_name ->
         Some (compute_alias_rules ~context_name ~collected ~dir ~sub_dir)
       | Install _ -> None
-    in
-    let file_tree_dir =
-      match context_name with
-      | Install _ -> None
-      | Context _ -> File_tree.find_dir sub_dir
     in
     (* Compute the set of targets and the set of source files that must not be
        copied *)
