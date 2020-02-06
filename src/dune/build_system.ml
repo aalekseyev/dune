@@ -854,7 +854,7 @@ end = struct
       | Context _ -> File_tree.find_dir sub_dir
     in
     let rules_from_parent = match file_tree_dir with
-      | None -> None
+      | None -> None (* CR aalekseyev: need src_dir of parent, not of ourselves *)
       | Some src_dir -> match File_tree.Dir.has_rules_for_subdirs src_dir with
         | false -> None
         | true ->
