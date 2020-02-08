@@ -853,9 +853,15 @@ end = struct
       | Install _ -> None
       | Context _ -> File_tree.find_dir sub_dir
     in
-    let rules_from_parent = match file_tree_dir with
-      | None -> None (* CR aalekseyev: need src_dir of parent, not of ourselves *)
-      | Some src_dir -> match File_tree.Dir.has_rules_for_subdirs src_dir with
+    let rules_from_parent =
+      match Path.Source.parent sub_dir with
+      | None -> None
+      | Some src_dir_parent ->
+        match File_tree.find_dir src_dir_parent with
+        | None ->
+          None
+        | Some parent_src_dir ->
+        match File_tree.Dir.has_rules_for_subdirs parent_src_dir with
         | false -> None
         | true ->
           let result = load_dir ~dir:(Path.build (Path.Build.parent_exn dir)) in
@@ -865,7 +871,7 @@ end = struct
     in
     let rules_produced = match rules_from_parent with
       | None -> rules_produced
-      | Some rules_from_parent -> Rules.union rules_produced rules_from_parent 
+      | Some rules_from_parent -> Rules.union rules_produced rules_from_parent
     in
     let rules =
       let dir = Path.build dir in
