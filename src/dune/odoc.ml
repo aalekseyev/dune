@@ -474,10 +474,11 @@ let setup_lib_html_rules_def =
     ~doc:"setup html rules for library" ~implicit_output:Rules.implicit_output
     ~input:(module Input)
     ~output:(module Unit)
-    ~visibility:Hidden Sync f
+    ~visibility:Hidden
+    (Memo.Function.sync f)
 
 let setup_lib_html_rules sctx lib ~requires =
-  Memo.With_implicit_output.exec setup_lib_html_rules_def (sctx, lib, requires)
+  Memo.With_implicit_output.exec_sync setup_lib_html_rules_def (sctx, lib, requires)
 
 let setup_pkg_html_rules_def =
   let module Input = struct
@@ -507,7 +508,8 @@ let setup_pkg_html_rules_def =
     ~output:(module Unit)
     ~implicit_output:Rules.implicit_output ~doc:"setup odoc package html rules"
     ~input:(module Input)
-    ~visibility:Hidden Sync
+    ~visibility:Hidden
+    (Memo.Function.sync
     (fun (sctx, pkg, (libs : Lib.Local.t list)) ->
       let requires =
         let libs = (libs :> Lib.t list) in
@@ -525,10 +527,10 @@ let setup_pkg_html_rules_def =
       let static_html = List.map ~f:Path.build (static_html ctx) in
       Rules.Produce.Alias.add_deps
         (Dep.html_alias ctx (Pkg pkg))
-        (Path.Set.of_list (List.rev_append static_html html_files)))
+        (Path.Set.of_list (List.rev_append static_html html_files))))
 
 let setup_pkg_html_rules sctx ~pkg ~libs =
-  Memo.With_implicit_output.exec setup_pkg_html_rules_def (sctx, pkg, libs)
+  Memo.With_implicit_output.exec_sync setup_pkg_html_rules_def (sctx, pkg, libs)
 
 let setup_package_aliases sctx (pkg : Package.t) =
   let ctx = Super_context.context sctx in
@@ -602,7 +604,8 @@ let setup_package_odoc_rules_def =
     ~output:(module Unit)
     ~implicit_output:Rules.implicit_output ~doc:"setup odoc package rules"
     ~input:(module Input)
-    ~visibility:Hidden Sync
+    ~visibility:Hidden
+    (Memo.Function.sync
     (fun (sctx, pkg) ->
       let mlds = Packages.mlds sctx pkg in
       let mlds = check_mlds_no_dupes ~pkg ~mlds in
@@ -624,10 +627,10 @@ let setup_package_odoc_rules_def =
               ~doc_dir:(Paths.odocs ctx (Pkg pkg))
               ~includes:(Build.return []))
       in
-      Dep.setup_deps ctx (Pkg pkg) (Path.set_of_build_paths_list odocs))
+      Dep.setup_deps ctx (Pkg pkg) (Path.set_of_build_paths_list odocs)))
 
 let setup_package_odoc_rules sctx ~pkg =
-  Memo.With_implicit_output.exec setup_package_odoc_rules_def (sctx, pkg)
+  Memo.With_implicit_output.exec_sync setup_package_odoc_rules_def (sctx, pkg)
 
 let init sctx =
   let stanzas = SC.stanzas sctx in

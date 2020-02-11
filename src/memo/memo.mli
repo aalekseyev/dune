@@ -1,20 +1,32 @@
 open! Stdune
 
-type ('input, 'output, 'f) t
+type ('input, 'output, 'k) t
 
 val on_already_reported : (Exn_with_backtrace.t -> Nothing.t) -> unit
 
+module Function : sig
+  include module type of struct include Fiber.Function end
+  module Info : sig
+    type t =
+      { name : string
+      ; doc : string option
+      }
+  end
+end
+
 module Sync : sig
-  type nonrec ('i, 'o) t = ('i, 'o, 'i -> 'o) t
+  type nonrec ('i, 'o) t = ('i, 'o, Function.Sync.k) t
+  type k = Function.Sync.k
 end
 
 module Async : sig
-  type nonrec ('i, 'o) t = ('i, 'o, 'i -> 'o Fiber.t) t
+  type nonrec ('i, 'o) t = ('i, 'o, Function.Async.k) t
+  type k = Function.Async.k
 end
 
 (** A stack frame within a computation. *)
 module Stack_frame : sig
-  type ('input, 'output, 'f) memo = ('input, 'output, 'f) t
+  type ('input, 'output, 'k) memo = ('input, 'output, 'k) t
 
   type t
 
@@ -49,21 +61,6 @@ end
     removes the values that depend on the [current_run] from the memoization
     cache, and cancels all pending computations. *)
 val reset : unit -> unit
-
-module Function : sig
-  module Type : sig
-    type ('a, 'b, 'f) t =
-      | Sync : ('a, 'b, 'a -> 'b) t
-      | Async : ('a, 'b, 'a -> 'b Fiber.t) t
-  end
-
-  module Info : sig
-    type t =
-      { name : string
-      ; doc : string option
-      }
-  end
-end
 
 module type Output_simple = sig
   type t
@@ -134,9 +131,8 @@ val create_with_store :
   -> input:(module Store.Input with type t = 'i)
   -> visibility:'i Visibility.t
   -> output:'o Output.t
-  -> ('i, 'o, 'f) Function.Type.t
-  -> 'f
-  -> ('i, 'o, 'f) t
+  -> ('i, 'o, 'k) Function.t
+  -> ('i, 'o, 'k) t
 
 (** [create name ~doc ~input ~visibility ~output f_type f] creates a memoized
     version of [f]. The result of [f] for a given input is cached, so that the
@@ -161,17 +157,15 @@ val create :
   -> input:(module Input with type t = 'i)
   -> visibility:'i Visibility.t
   -> output:'o Output.t
-  -> ('i, 'o, 'f) Function.Type.t
-  -> 'f
-  -> ('i, 'o, 'f) t
+  -> ('i, 'o, 'k) Function.t
+  -> ('i, 'o, 'k) t
 
 val create_hidden :
      string
   -> ?doc:string
   -> input:(module Input with type t = 'i)
-  -> ('i, 'o, 'f) Function.Type.t
-  -> 'f
-  -> ('i, 'o, 'f) t
+  -> ('i, 'o, 'k) Function.t
+  -> ('i, 'o, 'k) t
 
 (** The call [peek_exn t i] registers a dependency on [t i] and returns its
     value, failing if the value has not yet been computed. We do not expose
@@ -180,7 +174,9 @@ val create_hidden :
 val peek_exn : ('i, 'o, _) t -> 'i -> 'o
 
 (** Execute a memoized function *)
-val exec : (_, _, 'f) t -> 'f
+val exec_gen : ('i, 'o, 'k) t -> ('i, 'o, 'k) Function.t
+val exec_async : ('i, 'o, Async.k) t -> 'i -> 'o Fiber.t
+val exec_sync : ('i, 'o, Sync.k) t -> 'i -> 'o
 
 (** After running a memoization function with a given name and input, it is
     possible to query which dependencies that function used during execution by
@@ -269,27 +265,28 @@ module With_implicit_output : sig
   type ('i, 'o, 'f) t
 
   val create :
-       string
+    string
     -> ?doc:string
     -> input:(module Input with type t = 'i)
     -> visibility:'i Visibility.t
     -> output:(module Output_simple with type t = 'o)
     -> implicit_output:'io Implicit_output.t
-    -> ('i, 'o, 'f) Function.Type.t
-    -> 'f
-    -> ('i, 'o, 'f) t
+    -> ('i, 'o, 'k) Function.t
+    -> ('i, 'o, 'k) t
 
-  val exec : (_, _, 'f) t -> 'f
+  val exec_gen : ('i, 'o, 'k) t -> ('i, 'o, 'k) Function.t
+  val exec_async : ('i, 'o, Async.k) t -> 'i -> 'o Fiber.t
+  val exec_sync : ('i, 'o, Sync.k) t -> 'i -> 'o
 end
 
 module Cell : sig
-  type ('a, 'b, 'f) t
+  type ('a, 'b, 'k) t
 
   val input : ('a, _, _) t -> 'a
 
-  val get_sync : ('a, 'b, 'a -> 'b) t -> 'b
+  val get_sync : ('a, 'b, Sync.k) t -> 'b
 
-  val get_async : ('a, 'b, 'a -> 'b Fiber.t) t -> 'b Fiber.t
+  val get_async : ('a, 'b, Async.k) t -> 'b Fiber.t
 end
 
 val cell : ('a, 'b, 'f) t -> 'a -> ('a, 'b, 'f) Cell.t
@@ -333,4 +330,5 @@ module Poly : sig
   end) : sig
     val eval : 'a Function.input -> 'a Function.output Fiber.t
   end
+
 end

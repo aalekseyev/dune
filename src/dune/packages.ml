@@ -12,8 +12,8 @@ let mlds_by_package_def =
     ~implicit_output:Rules.implicit_output ~doc:"mlds by package"
     ~input:(module Super_context.As_memo_key)
     ~output:(module Output)
-    ~visibility:Hidden Sync
-    (fun sctx ->
+    ~visibility:Hidden
+    (Memo.Function.sync (fun sctx ->
       let stanzas = Super_context.stanzas sctx in
       stanzas
       |> List.concat_map ~f:(fun (w : _ Dir_with_dune.t) ->
@@ -23,9 +23,9 @@ let mlds_by_package_def =
                  let mlds = Dir_contents.mlds dc d in
                  Some (d.package.name, mlds)
                | _ -> None))
-      |> Package.Name.Map.of_list_reduce ~f:List.rev_append)
+      |> Package.Name.Map.of_list_reduce ~f:List.rev_append))
 
-let mlds_by_package = Memo.With_implicit_output.exec mlds_by_package_def
+let mlds_by_package = Memo.With_implicit_output.exec_sync mlds_by_package_def
 
 (* TODO memoize this so that we can cutoff at the package *)
 let mlds sctx pkg =

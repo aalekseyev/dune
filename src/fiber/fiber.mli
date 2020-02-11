@@ -256,3 +256,43 @@ val yield : unit -> unit t
 val run : 'a t -> 'a
 
 exception Never
+
+(** Generic handling of synchronous and asynchronous functions *)
+module Function : sig
+
+  type 'a fiber = 'a t
+
+  type sync = private Sync_tag
+  type async = private Async_tag
+
+  type ('i, 'o, 'k) t =
+    | Sync : ('i -> 'o) -> ('i, 'o, sync) t
+    | Async : ('i -> 'o fiber) -> ('i, 'o, async) t
+
+  module Sync : sig
+    type ('i, 'o, 'k) func = ('i, 'o, 'k) t
+    type ('i, 'o) t = 'i -> 'o
+    type k = sync = private Sync_tag
+
+    val inject : ('i, 'o) t -> ('i, 'o, k) func
+    val project : ('i, 'o, k) func -> ('i, 'o) t
+  end
+
+  module Async : sig
+    type ('i, 'o, 'k) func = ('i, 'o, 'k) t
+    type ('i, 'o) t = 'i -> 'o fiber
+    type k = async = private Async_tag
+
+    val inject : ('i, 'o) t -> ('i, 'o, k) func
+    val project : ('i, 'o, k) func -> ('i, 'o) t
+  end
+
+  module Kind : sig
+    type 'k t =
+      | Sync : Sync.k t
+      | Async : Async.k t
+  end
+
+  val async : ('i, 'o) Async.t -> ('i, 'o, Async.k) t
+  val sync : ('i, 'o) Sync.t -> ('i, 'o, Sync.k) t
+end

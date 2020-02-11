@@ -48,9 +48,9 @@ let get_flags var =
     Memo.create_hidden var
       ~doc:(sprintf "parse %s environment variable in context" var)
       ~input:(module Context)
-      Sync f
+      (Memo.Function.sync f)
   in
-  Memo.exec memo
+  Memo.exec_sync memo
 
 let ocamlfdo_flags = get_flags "OCAMLFDO_FLAGS"
 
@@ -121,9 +121,9 @@ let get_profile =
         (sprintf "use profile based on %s environment variable in context"
            Mode.var)
       ~input:(module Context)
-      Sync f
+      (Memo.Function.sync f)
   in
-  Memo.exec memo
+  Memo.exec_sync memo
 
 let opt_rule cctx m =
   let sctx = CC.super_context cctx in

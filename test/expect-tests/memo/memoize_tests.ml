@@ -6,15 +6,16 @@ open Dune_tests_common
 
 let () = init ()
 
-let string_fn_create name =
+let string_fn_create name f =
   Memo.create name
     ~input:(module String)
-    ~visibility:(Public Dune_lang.Decoder.string) Async
+    ~visibility:(Public Dune_lang.Decoder.string)
+    (Memo.Function.async f)
 
-let int_fn_create name =
+let int_fn_create name f =
   Memo.create name
     ~input:(module Int)
-    ~visibility:(Public Dune_lang.Decoder.int) Async
+    ~visibility:(Public Dune_lang.Decoder.int) (Memo.Function.async f)
 
 (* to run a computation *)
 let run f v =
@@ -29,7 +30,7 @@ let run f v =
     | Some exn -> Exn_with_backtrace.reraise exn
     | None -> raise Fiber.Never )
 
-let run_memo f v = run (Memo.exec f) v
+let run_memo f v = run (Memo.exec_async f) v
 
 (* the trivial dependencies are simply the identity function *)
 let compdep x = Fiber.return (x ^ x)
@@ -52,7 +53,7 @@ let counter = ref 0
 (* our computation increases the counter, adds the two dependencies, "some" and
    "another" and works by multiplying the input by two *)
 let comp x =
-  Fiber.return x >>= Memo.exec mcompdep1 >>= Memo.exec mcompdep2 >>= fun a ->
+  Fiber.return x >>= Memo.exec_async mcompdep1 >>= Memo.exec_async mcompdep2 >>= fun a ->
   counter := !counter + 1;
   String.sub a ~pos:0 ~len:(String.length a |> min 3) |> Fiber.return
 
@@ -125,7 +126,7 @@ let mcompcycle =
     Fiber.return x >>= dump_stack >>= fun x ->
     counter := !counter + 1;
     if !counter < 20 then
-      (x + 1) mod 3 |> Memo.exec (Fdecl.get mcompcycle)
+      (x + 1) mod 3 |> Memo.exec_async (Fdecl.get mcompcycle)
     else
       failwith "cycle"
   in
@@ -170,7 +171,7 @@ let%expect_test _ =
 let mfib =
   let mfib = Fdecl.create Dyn.Encoder.opaque in
   let compfib x =
-    let mfib = Memo.exec (Fdecl.get mfib) in
+    let mfib = Memo.exec_async (Fdecl.get mfib) in
     counter := !counter + 1;
     if x <= 1 then
       Fiber.return x
@@ -195,17 +196,18 @@ let%expect_test _ =
 2001
 |}]
 
-let sync_int_fn_create name =
+let sync_int_fn_create name f =
   Memo.create name
     ~input:(module Int)
-    ~visibility:(Public Dune_lang.Decoder.int) Sync
+    ~visibility:(Public Dune_lang.Decoder.int)
+    (Memo.Function.sync f)
 
 let counter = ref 0
 
 let sync_fib =
   let mfib = Fdecl.create Dyn.Encoder.opaque in
   let compfib x =
-    let mfib = Memo.exec (Fdecl.get mfib) in
+    let mfib = Memo.exec_sync (Fdecl.get mfib) in
     counter := !counter + 1;
     if x <= 1 then
       x
@@ -219,9 +221,9 @@ let sync_fib =
   fn
 
 let%expect_test _ =
-  Format.printf "%d@." (Memo.exec sync_fib 2000);
+  Format.printf "%d@." (Memo.exec_sync sync_fib 2000);
   Format.printf "%d@." !counter;
-  Format.printf "%d@." (Memo.exec sync_fib 1800);
+  Format.printf "%d@." (Memo.exec_sync sync_fib 1800);
   Format.printf "%d@." !counter;
   [%expect {|
   2406280077793834213
@@ -232,13 +234,13 @@ let%expect_test _ =
 
 let make_f name f ~input ~output =
   Memo.create name ~input ~visibility:Hidden ~output:(Allow_cutoff output)
-    ~doc:"" Sync f
+    ~doc:"" (Memo.Function.sync f)
 
 let id =
   let f =
     make_f "id" (fun s -> s) ~input:(module String) ~output:(module String)
   in
-  Memo.exec f
+  Memo.exec_sync f
 
 module Test_lazy (Lazy : sig
   type 'a t
@@ -267,7 +269,7 @@ struct
         ~input:(module String)
         ~output:(module Lazy_string)
     in
-    Memo.exec f
+    Memo.exec_sync f
 
   let f1_def, f1 =
     let f =
@@ -276,7 +278,7 @@ struct
         ~input:(module String)
         ~output:(module String)
     in
-    (f, Memo.exec f)
+    (f, Memo.exec_sync f)
 
   let f2_def, f2 =
     let f =
@@ -285,7 +287,7 @@ struct
         ~input:(module String)
         ~output:(module String)
     in
-    (f, Memo.exec f)
+    (f, Memo.exec_sync f)
 
   let run () = (f1 "foo", f2 "foo")
 
@@ -345,17 +347,17 @@ let depends_on_run =
   Memo.create "foobar" ~doc:"foo123"
     ~input:(module Unit)
     ~output:(Allow_cutoff (module Unit))
-    ~visibility:Hidden Sync
-    (fun () ->
+    ~visibility:Hidden (Memo.Function.sync (fun () ->
       let (_ : Memo.Run.t) = Memo.current_run () in
-      print_endline "running foobar")
+      print_endline "running foobar"))
+
 
 let%expect_test _ =
-  Memo.exec depends_on_run ();
-  Memo.exec depends_on_run ();
+  Memo.exec_sync depends_on_run ();
+  Memo.exec_sync depends_on_run ();
   print_endline "resetting memo";
   Memo.reset ();
-  Memo.exec depends_on_run ();
+  Memo.exec_sync depends_on_run ();
   [%expect {|
     running foobar
     resetting memo
@@ -370,7 +372,8 @@ let%expect_test _ =
       ~input:(module String)
       ~visibility:(Public Dune_lang.Decoder.string)
       ~output:(Allow_cutoff (module String))
-      ~doc:"" Sync f
+      ~doc:""
+      (Memo.Function.sync f)
   in
   let cell = Memo.cell memo "foobar" in
   print_endline (Cell.get_sync cell);
@@ -384,9 +387,9 @@ let printf = Printf.printf
 let%expect_test "fib linked list" =
   let module Element = struct
     type t =
-      { prev_cell : (int, t, int -> t) Memo.Cell.t
+      { prev_cell : (int, t, Memo.Sync.k) Memo.Cell.t
       ; value : int
-      ; next_cell : (int, t, int -> t) Memo.Cell.t
+      ; next_cell : (int, t, Memo.Sync.k) Memo.Cell.t
       }
 
     let to_dyn t = Dyn.Int t.value
@@ -410,15 +413,16 @@ let%expect_test "fib linked list" =
   let memo =
     Memo.create "fib"
       ~input:(module Int)
-      ~visibility:Hidden Sync
+      ~visibility:Hidden
       ~output:(Simple (module Element))
-      compute_element ~doc:""
+      ~doc:""
+      (Memo.Function.sync compute_element)
   in
   Fdecl.set memo_fdecl memo;
-  let fourth = Memo.exec memo 4 in
+  let fourth = Memo.exec_sync memo 4 in
   printf "4th: %d\n" fourth.value;
   printf "next: %d\n" (force fourth.next_cell).value;
-  let seventh = Memo.exec memo 7 in
+  let seventh = Memo.exec_sync memo 7 in
   printf "7th: %d\n" seventh.value;
   printf "prev: %d\n" (force seventh.prev_cell).value;
   printf "prev: %d\n" (force (force seventh.prev_cell).prev_cell).value;

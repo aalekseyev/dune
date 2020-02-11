@@ -262,9 +262,10 @@ let create ~(kind : Kind.t) ~path ~env ~env_nodes ~name ~merlin ~targets
       (sprintf "which-memo-for-%s" (Context_name.to_string name))
       ~input:(module Program.Name)
       ~output:(Allow_cutoff (module Program.Which_path))
-      ~visibility:Hidden Sync (Program.which ~path)
+      ~visibility:Hidden
+      (Memo.Function.sync (Program.which ~path))
   in
-  let which = Memo.exec which_memo in
+  let which = Memo.exec_sync which_memo in
   let which_exn x =
     match which x with
     | None -> prog_not_found_in_path x
@@ -619,9 +620,9 @@ let opam_version =
     Memo.create "opam-version" ~doc:"get opam version"
       ~input:(module Path)
       ~output:(Simple (module Output))
-      Async f ~visibility:Memo.Visibility.Hidden
+      (Memo.Function.async f) ~visibility:Memo.Visibility.Hidden
   in
-  Memo.exec memo
+  Memo.exec_async memo
 
 let create_for_opam ~root ~env ~env_nodes ~targets ~profile ~switch ~name
     ~merlin ~host_context ~host_toolchain ~fdo_target_exe
@@ -777,18 +778,19 @@ module Create = struct
     Memo.create "create-context" ~doc:"create contexts"
       ~input:(module Unit)
       ~output:(Simple (module Output))
-      ~visibility:Memo.Visibility.Hidden Async call
+      ~visibility:Memo.Visibility.Hidden (Memo.Function.async call)
 end
 
 module DB = struct
-  let all = Memo.exec Create.memo
+  let all = Memo.exec_async Create.memo
 
   let get =
     let memo =
       Memo.create "context-db-get" ~doc:"get context from db"
         ~input:(module Context_name)
         ~output:(Simple (module T))
-        ~visibility:Hidden Sync
+        ~visibility:Hidden
+        (Memo.Function.sync
         (fun name ->
           (* CR-someday amokhov: Here we assume that [get] is called after the
              asynchronously running function [Create.memo] has completed. It
@@ -798,7 +800,7 @@ module DB = struct
              too. @rgrinberg and @diml decided that it would be too large and
              possibly undesirable refactoring. Any other options? *)
           let contexts = Memo.peek_exn Create.memo () in
-          List.find_exn contexts ~f:(fun c -> Context_name.equal name c.name))
+          List.find_exn contexts ~f:(fun c -> Context_name.equal name c.name)))
     in
     fun dir ->
       match Path.Build.extract_build_context dir with
@@ -807,7 +809,7 @@ module DB = struct
           [ ("dir", Path.Build.to_dyn dir) ]
       | Some (name, _) ->
         let name = Context_name.of_string name in
-        Memo.exec memo name
+        Memo.exec_sync memo name
 end
 
 let install_ocaml_libdir t =

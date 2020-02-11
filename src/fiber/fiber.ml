@@ -509,3 +509,57 @@ let run t =
       loop ()
   in
   loop ()
+
+module Function = struct
+
+  type 'a fiber = 'a t
+
+  module Sync0 = struct
+    type ('i, 'o) t = 'i -> 'o
+    type k = private Sync_tag
+  end
+
+  module Async0 = struct
+    type ('i, 'o) t = 'i -> 'o fiber
+    type k = private Async_tag
+  end
+
+  open struct
+    module Sync = Sync0
+    module Async = Async0
+  end
+
+  module Kind = struct
+    type 'k t =
+      | Sync : Sync.k t
+      | Async : Async.k t
+  end
+
+  type async = Async.k = private Async_tag
+  type sync = Sync.k = private Sync_tag
+
+  type ('i, 'o, 'k) t =
+    | Sync : ('i, 'o) Sync.t -> ('i, 'o, Sync.k) t
+    | Async : ('i, 'o) Async.t -> ('i, 'o, Async.k) t
+
+  let sync x = Sync x
+  let async x = Async x
+
+
+  module Sync = struct
+    type ('i, 'o, 'k) func = ('i, 'o, 'k) t
+    include Sync
+
+    let inject x = Sync x
+    let project x = match x with
+      | Sync x -> x
+  end
+
+  module Async = struct
+    type ('i, 'o, 'k) func = ('i, 'o, 'k) t
+    include Async
+    let inject x = Async x
+    let project x = match x with
+      | Async x -> x
+  end
+end

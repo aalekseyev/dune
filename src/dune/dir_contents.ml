@@ -311,18 +311,19 @@ end = struct
     Memo.create "dir-contents-get0"
       ~input:(module Key)
       ~output:(Simple (module Output))
-      ~doc:"dir contents" ~visibility:Hidden Sync get0_impl
+      ~doc:"dir contents" ~visibility:Hidden
+      (Memo.Function.sync get0_impl)
 
   let get sctx ~dir =
-    match Memo.exec memo0 (sctx, dir) with
+    match Memo.exec_sync memo0 (sctx, dir) with
     | Here { t; rules = _; subdirs = _ } -> t
     | See_above group_root -> (
-      match Memo.exec memo0 (sctx, group_root) with
+      match Memo.exec_sync memo0 (sctx, group_root) with
       | See_above _ -> assert false
       | Here { t; rules = _; subdirs = _ } -> t )
 
   let gen_rules sctx ~dir =
-    match Memo.exec memo0 (sctx, dir) with
+    match Memo.exec_sync memo0 (sctx, dir) with
     | See_above group_root -> Group_part group_root
     | Here { t; rules; subdirs } ->
       Rules.produce_opt rules;

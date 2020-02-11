@@ -284,9 +284,10 @@ end = struct
                let to_dyn _ = Dyn.Opaque
              end ))
         "stanzas-to-entries" ~doc:"install entries for all packages"
-        ~visibility:Hidden Sync stanzas_to_entries
+        ~visibility:Hidden
+        (Memo.Function.sync stanzas_to_entries)
     in
-    Memo.exec memo
+    Memo.exec_sync memo
 end
 
 let gen_dune_package sctx pkg =
@@ -535,11 +536,11 @@ let meta_and_dune_package_rules_memo =
     ~input:(module Project_and_super_context)
     ~visibility:Hidden
     ~output:(module Unit)
-    ~implicit_output:Rules.implicit_output Sync meta_and_dune_package_rules_impl
+    ~implicit_output:Rules.implicit_output (Memo.Function.sync meta_and_dune_package_rules_impl)
 
 let meta_and_dune_package_rules sctx ~dir =
   let project = Scope.project (Super_context.find_scope_by_dir sctx dir) in
-  Memo.With_implicit_output.exec meta_and_dune_package_rules_memo (project, sctx)
+  Memo.With_implicit_output.exec_sync meta_and_dune_package_rules_memo (project, sctx)
 
 let symlink_installed_artifacts_to_build_install sctx
     (entries : (Loc.t option * Path.Build.t Install.Entry.t) list)
@@ -697,8 +698,8 @@ let memo =
     ~input:(module Sctx_and_package)
     ~output:(Simple (module Scheme'))
     "install-rules-and-pkg-entries" ~doc:"install rules and package entries"
-    ~visibility:Hidden Sync
-    (fun (sctx, pkg) ->
+    ~visibility:Hidden
+    (Memo.Function.sync (fun (sctx, pkg) ->
       let ctx = Super_context.context sctx in
       let context_name = ctx.name in
       let rules =
@@ -707,15 +708,15 @@ let memo =
                 install_rules sctx pkg;
                 install_alias ctx pkg))
       in
-      Approximation
+      Scheme.Approximation
         ( Dir_set.union_all
             [ Dir_set.subtree (Config.local_install_dir ~context:context_name)
             ; Dir_set.singleton (Package_paths.build_dir ctx pkg)
             ; Dir_set.singleton ctx.build_dir
             ]
-        , Thunk (fun () -> Finite (Rules.to_map (Memo.Lazy.force rules))) ))
+        , Thunk (fun () -> Finite (Rules.to_map (Memo.Lazy.force rules))) )))
 
-let scheme sctx pkg = Memo.exec memo (sctx, pkg)
+let scheme sctx pkg = Memo.exec_sync memo (sctx, pkg)
 
 let scheme_per_ctx_memo =
   Memo.create
@@ -727,7 +728,8 @@ let scheme_per_ctx_memo =
 
            let to_dyn _ = Dyn.Opaque
          end ))
-    "install-rule-scheme" ~doc:"install rules scheme" ~visibility:Hidden Sync
+    "install-rule-scheme" ~doc:"install rules scheme" ~visibility:Hidden
+    (Memo.Function.sync
     (fun sctx ->
       let packages = Super_context.packages sctx in
       let scheme =
@@ -735,11 +737,11 @@ let scheme_per_ctx_memo =
           (List.map (Package.Name.Map.to_list packages) ~f:(fun (_, pkg) ->
                scheme sctx pkg))
       in
-      Scheme.evaluate ~union:Rules.Dir_rules.union scheme)
+      Scheme.evaluate ~union:Rules.Dir_rules.union scheme))
 
 let gen_rules sctx ~dir =
   let rules, subdirs =
-    Scheme.Evaluated.get_rules (Memo.exec scheme_per_ctx_memo sctx) ~dir
+    Scheme.Evaluated.get_rules (Memo.exec_sync scheme_per_ctx_memo sctx) ~dir
   in
   Rules.produce_dir ~dir (Option.value ~default:Rules.Dir_rules.empty rules);
   Build_system.Subdir_set.These subdirs
@@ -766,6 +768,6 @@ let packages =
 
              let equal = Path.Build.Map.equal ~equal:Package.Name.Set.equal
            end ))
-      Sync f
+      (Memo.Function.sync f)
   in
-  fun sctx -> Memo.exec memo sctx
+  fun sctx -> Memo.exec_sync memo sctx

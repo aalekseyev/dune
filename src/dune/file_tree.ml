@@ -187,7 +187,7 @@ module Dir0 = struct
     ; sub_dir_as_t :
         ( Path.Source.t
         , t Output.t option
-        , Path.Source.t -> t Output.t option )
+        , Memo.Sync.k )
         Memo.Cell.t
     }
 
@@ -299,7 +299,7 @@ module rec Memoized : sig
        Path.Source.t
     -> ( Path.Source.t
        , Dir0.t Output.t option
-       , Path.Source.t -> Dir0.t Output.t option )
+       , Memo.Sync.k )
        Memo.Cell.t
 
   val find_dir : Path.Source.t -> Dir0.t option
@@ -485,7 +485,8 @@ end = struct
       Memo.create "find-dir-raw" ~doc:"get file tree"
         ~input:(module Path.Source)
         ~output:(Simple (module Output))
-        ~visibility:Memo.Visibility.Hidden Sync find_dir_raw_impl
+        ~visibility:Memo.Visibility.Hidden
+        (Memo.Function.sync find_dir_raw_impl)
     in
     Memo.cell memo
 

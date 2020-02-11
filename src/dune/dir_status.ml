@@ -75,7 +75,7 @@ module DB = struct
   let stanzas_in db ~dir = Path.Build.Map.find db.stanzas_per_dir dir
 
   let get db ~dir =
-    let get ~dir = Memo.exec db.fn dir in
+    let get ~dir = Memo.exec_sync db.fn dir in
     let enclosing_group ~dir =
       match Path.Build.parent dir with
       | None -> No_group
@@ -135,7 +135,7 @@ module DB = struct
                 ~input:(module Path.Build)
                 ~visibility:Hidden
                 ~output:(Simple (module T))
-                ~doc:"Get a directory status." Sync Fn.get
+                ~doc:"Get a directory status." (Memo.Function.sync Fn.get)
           }
       end
 
@@ -147,5 +147,5 @@ module DB = struct
     end in
     M.Res.t
 
-  let get db ~dir = Memo.exec db.fn dir
+  let get db ~dir = Memo.exec_sync db.fn dir
 end

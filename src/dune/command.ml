@@ -157,10 +157,10 @@ module Args = struct
     let memo =
       Memo.create_hidden "Command.Args.memo"
         ~input:(module Path)
-        Sync
-        (fun dir -> expand_static ~dir t)
+        (Memo.Function.sync
+           (fun dir -> expand_static ~dir t))
     in
-    Expand (fun ~dir -> Memo.exec memo dir)
+    Expand (fun ~dir -> Memo.exec_sync memo dir)
 end
 
 module Ml_kind = struct

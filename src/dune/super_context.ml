@@ -149,10 +149,10 @@ end = struct
           }
 
         let memo =
-          Memo.exec
+          Memo.exec_sync
             (Memo.create_hidden "env-nodes-memo"
                ~input:(module Path.Build)
-               Sync (get_impl env_tree))
+               (Memo.Function.sync (get_impl env_tree)))
 
         let env_tree () = env_tree
       end

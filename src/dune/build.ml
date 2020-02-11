@@ -265,8 +265,8 @@ end = struct
   let memo =
     Memo.create_hidden "Build.static_deps"
       ~input:(module Input)
-      Sync
-      (fun (T m) -> Analysis.static_deps m.t)
+      (Memo.Function.sync
+         (fun (T m : Input.t) -> Analysis.static_deps m.t))
 
   let rec static_deps : type a. a t -> Static_deps.t =
    fun t ->
@@ -295,7 +295,8 @@ end = struct
       { Static_deps.empty with rule_deps = Dep.Set.of_files [ p ] }
     | Record_lib_deps _ -> Static_deps.empty
     | Fail _ -> Static_deps.empty
-    | Memo m -> Memo.exec memo (Input.T m)
+    | Memo m ->
+      Memo.exec_sync memo (Input.T m)
     | Catch (t, _) -> static_deps t
 end
 

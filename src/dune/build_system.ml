@@ -17,19 +17,19 @@ end = struct
     Memo.create "mkdir_p" ~doc:"mkdir_p"
       ~input:(module Path.Build)
       ~output:(Simple (module Unit))
-      ~visibility:Hidden Sync
-      (fun p -> Path.mkdir_p (Path.build p))
+      ~visibility:Hidden
+      (Memo.Function.sync (fun p -> Path.mkdir_p (Path.build p)))
 
-  let mkdir_p = Memo.exec mkdir_p_def
+  let mkdir_p = Memo.exec_sync mkdir_p_def
 
   let assert_exists_def =
     Memo.create "assert_path_exists" ~doc:"Path.exists"
       ~input:(module Path)
       ~output:(Simple (module Bool))
-      ~visibility:Hidden Sync Path.exists
+      ~visibility:Hidden (Memo.Function.sync Path.exists)
 
   let assert_exists ~loc path =
-    if not (Memo.exec assert_exists_def path) then
+    if not (Memo.exec_sync assert_exists_def path) then
       User_error.raise ~loc
         [ Pp.textf "%S does not exist" (Path.to_string_maybe_quoted path) ]
 
@@ -1053,9 +1053,9 @@ end = struct
     let memo =
       Memo.create_hidden "load-dir" ~doc:"load dir"
         ~input:(module Path)
-        Sync load_dir_impl
+        (Memo.Function.sync load_dir_impl)
     in
-    fun ~dir -> Memo.exec memo dir
+    fun ~dir -> Memo.exec_sync memo dir
 end
 
 open Load_rules
@@ -1153,7 +1153,7 @@ and Exported : sig
   end
 
   (** Exported to inspect memoization cycles. *)
-  val build_file_memo : (Path.t, unit, Path.t -> unit Fiber.t) Memo.t
+  val build_file_memo : (Path.t, unit) Memo.Async.t
 end = struct
   open Used_recursively
 
@@ -1194,14 +1194,14 @@ end = struct
           "Evaluate the build description of a rule and return the action and \
            dynamic dependencies of the rule."
         ~input:(module Rule)
-        ~visibility:Hidden Async
+        ~visibility:Hidden (Memo.Function.async
         (fun rule ->
-          evaluate_and_discover_dynamic_deps_unmemoized (Memoized rule))
+          evaluate_and_discover_dynamic_deps_unmemoized (Memoized rule)))
 
     let evaluate_and_discover_dynamic_deps (type a) (t : a t) =
       match t with
       | Non_memoized _ -> evaluate_and_discover_dynamic_deps_unmemoized t
-      | Memoized rule -> Memo.exec memo rule
+      | Memoized rule -> Memo.exec_async memo rule
 
     let evaluate t =
       let+ result, dynamic_deps = evaluate_and_discover_dynamic_deps t in
@@ -1643,18 +1643,20 @@ end = struct
       Path.Set.filter (targets_of ~dir) ~f:(File_selector.test g)
 
     let eval =
-      Memo.exec
+      Memo.exec_sync
         (Memo.create "eval-pred" ~doc:"Evaluate a predicate in a directory"
            ~input:(module File_selector)
            ~output:(Allow_cutoff (module Path.Set))
-           ~visibility:Hidden Sync eval_impl)
+           ~visibility:Hidden
+           (Memo.Function.sync eval_impl))
 
     let build =
-      Memo.exec
+      Memo.exec_async
         (Memo.create "build-pred" ~doc:"build a predicate"
            ~input:(module File_selector)
            ~output:(Allow_cutoff (module Unit))
-           ~visibility:Hidden Async build_impl)
+           ~visibility:Hidden
+           (Memo.Function.async build_impl))
   end
 
   let build_file_memo =
@@ -1662,18 +1664,19 @@ end = struct
       ~output:(Allow_cutoff (module Unit))
       ~doc:"Build a file."
       ~input:(module Path)
-      ~visibility:(Public Dpath.decode) Async build_file_impl
+      ~visibility:(Public Dpath.decode)
+      (Memo.Function.async build_file_impl)
 
-  let build_file = Memo.exec build_file_memo
+  let build_file = Memo.exec_async build_file_memo
 
   let execute_rule_memo =
     Memo.create "execute-rule"
       ~output:(Allow_cutoff (module Unit))
       ~doc:"-"
       ~input:(module Rule)
-      ~visibility:Hidden Async execute_rule_impl
+      ~visibility:Hidden (Memo.Function.async execute_rule_impl)
 
-  let execute_rule = Memo.exec execute_rule_memo
+  let execute_rule = Memo.exec_async execute_rule_memo
 
   let () =
     Fdecl.set Rule_fn.loc_decl (fun () ->

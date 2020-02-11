@@ -1,6 +1,20 @@
 open! Stdune
 open Fiber.O
-module Function = Function
+
+module Function = struct
+  include Fiber.Function
+  module Info = struct
+    type t =
+      { name : string
+      ; doc : string option
+      }
+  end
+end
+
+open struct
+  module Async = Function.Async
+  module Sync = Function.Sync
+end
 
 let on_already_reported = ref Exn_with_backtrace.reraise
 
@@ -79,14 +93,14 @@ module Visibility = struct
 end
 
 module Spec = struct
-  type ('a, 'b, 'f) t =
+  type ('a, 'b, 'k) t =
     { info : Function.Info.t option
     ; input : (module Store_intf.Input with type t = 'a)
     ; output : (module Output_simple with type t = 'b)
     ; allow_cutoff : 'b Allow_cutoff.t
     ; decode : 'a Dune_lang.Decoder.t
     ; witness : 'a Type_eq.Id.t
-    ; f : ('a, 'b, 'f) Function.t
+    ; f : ('a, 'b, 'k) Function.t
     }
 
   type packed = T : (_, _, _) t -> packed [@@unboxed]
@@ -129,6 +143,7 @@ module Spec = struct
     ; witness = Type_eq.Id.create ()
     ; f
     }
+
 end
 
 module Id = Id.Make ()
@@ -190,8 +205,8 @@ module M = struct
          [Init] should be treated exactly the same as [Running*] with a stale
          value of [Run.t]. *)
       | Init
-      | Running_sync : Run.t -> ('a, 'b, 'a -> 'b) t
-      | Running_async : Run.t * 'b Fiber.Ivar.t -> ('a, 'b, 'a -> 'b Fiber.t) t
+      | Running_sync : Run.t -> ('a, 'b, Function.Sync.k) t
+      | Running_async : Run.t * 'b Fiber.Ivar.t -> ('a, 'b, Function.Async.k) t
       | Failed of Run.t * Exn_with_backtrace.t
       | Done of 'b Cached_value.t
   end =
@@ -336,8 +351,8 @@ module Cached_value = struct
             else
               let changed =
                 ( match node.spec.f with
-                | Function.Sync _ -> Fiber.return (get_sync t')
-                | Function.Async _ -> get_async t' )
+                  | Function.Sync _ -> Fiber.return (get_sync t')
+                  | Function.Async _ -> get_async t' )
                 >>| function
                 | None -> true
                 | Some curr_output -> dep_changed node prev_output curr_output
@@ -495,12 +510,10 @@ module Stack_frame = struct
     | None -> None
 end
 
-let create_with_cache (type i o f) name ~cache ?doc ~input ~visibility ~output
-    (typ : (i, o, f) Function.Type.t) (f : f) =
-  let f = Function.of_type typ f in
-  let spec =
-    Spec.create ~info:(Some { name; doc }) ~input ~output ~visibility ~f
-  in
+
+let create_with_cache (type i o k) name ~cache ?doc ~input ~visibility ~output
+      (f : (i, o, k) Function.t) =
+  let spec = Spec.create ~info:(Some { name; doc }) ~input ~output ~visibility ~f in
   ( match visibility with
   | Public _ -> Spec.register spec
   | Hidden -> () );
@@ -509,18 +522,18 @@ let create_with_cache (type i o f) name ~cache ?doc ~input ~visibility ~output
 
 let create_with_store (type i) name
     ~store:(module S : Store_intf.S with type key = i) ?doc ~input ~visibility
-    ~output typ f =
+    ~output f =
   let cache = Store.make (module S) in
-  create_with_cache name ~cache ?doc ~input ~output ~visibility typ f
+  create_with_cache name ~cache ?doc ~input ~output ~visibility f
 
 let create (type i) name ?doc ~input:(module Input : Input with type t = i)
-    ~visibility ~output typ f =
+    ~visibility ~output f =
   (* This mutable table is safe: the implementation tracks all dependencies. *)
   let cache = Store.of_table (Table.create (module Input) 16) in
   let input = (module Input : Store_intf.Input with type t = i) in
-  create_with_cache name ~cache ?doc ~input ~visibility ~output typ f
+  create_with_cache name ~cache ?doc ~input ~visibility ~output f
 
-let create_hidden (type output) name ?doc ~input typ impl =
+let create_hidden (type output) name ?doc ~input impl =
   let module O = struct
     type t = output
 
@@ -528,7 +541,7 @@ let create_hidden (type output) name ?doc ~input typ impl =
   end in
   create
     ~output:(Simple (module O))
-    ~visibility:Hidden name ?doc ~input typ impl
+    ~visibility:Hidden name ?doc ~input impl
 
 module Exec = struct
   let make_dep_node ~spec ~state ~input =
@@ -549,18 +562,18 @@ let dep_node (type i o f) (t : (i, o, f) t) inp =
     dep_node
 
 module Exec_sync = struct
-  let compute run inp dep_node =
+  let compute run inp (dep_node : (_, _, Function.Sync.k) Dep_node.t) =
     (* define the function to update / double check intermediate result *)
     (* set context of computation then run it *)
     let res =
       match
         Call_stack.push_sync_frame (T dep_node) (fun () ->
-            match dep_node.spec.f with
-            | Function.Sync f ->
-              (* If [f] raises an exception, [push_sync_frame] re-raises it
-                 twice, so you'd end up with ugly "re-raised by" stack frames.
-                 Catching it here cuts the backtrace to just the desired part. *)
-              Exn_with_backtrace.try_with (fun () -> f inp))
+          match dep_node.spec.f with
+          | Function.Sync f ->
+            (* If [f] raises an exception, [push_sync_frame] re-raises it
+               twice, so you'd end up with ugly "re-raised by" stack frames.
+               Catching it here cuts the backtrace to just the desired part. *)
+            Exn_with_backtrace.try_with (fun () -> f inp))
       with
       | Error exn -> (
         dep_node.state <- Failed (run, exn);
@@ -638,8 +651,8 @@ module Exec_async = struct
     (* set context of computation then run it *)
     let* res =
       Call_stack.push_async_frame (T dep_node) (fun () ->
-          match dep_node.spec.f with
-          | Function.Async f -> f inp)
+        match dep_node.spec.f with
+        | Function.Async f -> f inp)
     in
     (* update the output cache with the correct value *)
     let deps = get_deps_from_graph_exn dep_node in
@@ -658,7 +671,7 @@ module Exec_async = struct
     dep_node.state <- Running_async (Run.current (), ivar);
     compute inp ivar dep_node
 
-  let exec_dep_node (dep_node : _ Dep_node.t) inp =
+  let exec_dep_node (dep_node : (_, _, Async.k) Dep_node.t) inp =
     add_rev_dep ~called_from_peek:false dep_node;
     match dep_node.state with
     | Init -> recompute inp dep_node
@@ -684,10 +697,13 @@ module Exec_async = struct
   let exec t inp = exec_dep_node (dep_node t inp) inp
 end
 
-let exec (type i o f) (t : (i, o, f) t) =
+let exec_gen (type i o k) (t : (i, o, k) t) : (i, o, k) Function.t =
   match t.spec.f with
-  | Function.Async _ -> (Exec_async.exec t : f)
-  | Function.Sync _ -> (Exec_sync.exec t : f)
+  | Function.Async _ -> Function.Async.inject (Exec_async.exec t)
+  | Function.Sync _ -> Function.Sync.inject (Exec_sync.exec t)
+
+let exec_sync t k = Function.Sync.project (exec_gen t) k
+let exec_async t k = Function.Async.project (exec_gen t) k
 
 let peek (type i o f) (t : (i, o, f) t) inp =
   match Store.find t.cache inp with
@@ -730,8 +746,8 @@ let call name input =
   let input = Dune_lang.Decoder.parse spec.decode Univ_map.empty input in
   let+ output =
     ( match spec.f with
-    | Function.Async f -> f
-    | Function.Sync f -> fun x -> Fiber.return (f x) )
+      | Function.Async f -> f
+      | Function.Sync f -> fun x -> Fiber.return (f x) )
       input
   in
   Output.to_dyn output
@@ -752,11 +768,13 @@ let function_info name = get_func name |> function_info_of_spec
 let get_call_stack = Call_stack.get_call_stack
 
 module Sync = struct
-  type nonrec ('i, 'o) t = ('i, 'o, 'i -> 'o) t
+  type k = Function.Sync.k
+  type nonrec ('i, 'o) t = ('i, 'o, k) t
 end
 
 module Async = struct
-  type nonrec ('i, 'o) t = ('i, 'o, 'i -> 'o Fiber.t) t
+  type k = Function.Async.k
+  type nonrec ('i, 'o) t = ('i, 'o, k) t
 end
 
 let current_run =
@@ -765,18 +783,18 @@ let current_run =
     create "current-run"
       ~input:(module Unit)
       ~output:(Simple (module Run))
-      ~visibility:Hidden Sync f
+      ~visibility:Hidden (Function.sync f)
   in
-  fun () -> exec memo ()
+  fun () -> exec_sync memo ()
 
 module Lazy_id = Stdune.Id.Make ()
 
 module With_implicit_output = struct
-  type ('i, 'o, 'f) t = 'f
+  type ('i, 'o, 'k) t = ('i, 'o, 'k) Function.t
 
-  let create (type i o f io) name ?doc ~input ~visibility
-      ~output:(module O : Output_simple with type t = o) ~implicit_output
-      (typ : (i, o, f) Function.Type.t) (impl : f) =
+  let create (type i o k io) name ?doc ~input ~visibility
+        ~output:(module O : Output_simple with type t = o) ~implicit_output
+        (impl : (i, o, k) Function.t) : (i, o, k) t =
     let output =
       Output.Simple
         ( module struct
@@ -786,29 +804,32 @@ module With_implicit_output = struct
             Dyn.List [ O.to_dyn o; Dyn.String "<implicit output is opaque>" ]
         end )
     in
-    match typ with
-    | Function.Type.Sync ->
+    match impl with
+    | Function.Sync impl ->
       let memo =
-        create name ?doc ~input ~visibility ~output Sync (fun i ->
-            Implicit_output.collect_sync implicit_output (fun () -> impl i))
+        create name ?doc ~input ~visibility ~output (Function.sync (fun i ->
+          Implicit_output.collect_sync implicit_output (fun () -> impl i)))
       in
-      ( fun input ->
-          let res, output = exec memo input in
+      Function.Sync.inject ( fun input ->
+        let res, output = exec_sync memo input in
+        Implicit_output.produce_opt implicit_output output;
+        res
+      )
+    | Function.Async impl ->
+      let memo =
+        create name ?doc ~input ~visibility ~output (Function.async (fun i ->
+          Implicit_output.collect_async implicit_output (fun () -> impl i)))
+      in
+      Function.Async.inject ( fun input ->
+        Fiber.map (exec_async memo input) ~f:(fun (res, output) ->
           Implicit_output.produce_opt implicit_output output;
-          res
-        : f )
-    | Function.Type.Async ->
-      let memo =
-        create name ?doc ~input ~visibility ~output Async (fun i ->
-            Implicit_output.collect_async implicit_output (fun () -> impl i))
-      in
-      ( fun input ->
-          Fiber.map (exec memo input) ~f:(fun (res, output) ->
-              Implicit_output.produce_opt implicit_output output;
-              res)
-        : f )
+          res)
+      )
 
-  let exec t = t
+  let exec_gen t = t
+
+  let exec_sync = Function.Sync.project
+  let exec_async = Function.Async.project
 end
 
 module Cell = struct
@@ -816,10 +837,10 @@ module Cell = struct
 
   let input (t : (_, _, _) t) = t.input
 
-  let get_sync (type a b) (dep_node : (a, b, a -> b) Dep_node.t) =
+  let get_sync (type a b) (dep_node : (a, b, Function.Sync.k) Dep_node.t) =
     Exec_sync.exec_dep_node dep_node dep_node.input
 
-  let get_async (type a b) (dep_node : (a, b, a -> b Fiber.t) Dep_node.t) =
+  let get_async (type a b) (dep_node : (a, b, Function.Async.k) Dep_node.t) =
     Exec_async.exec_dep_node dep_node dep_node.input
 end
 
@@ -839,7 +860,7 @@ let lazy_ (type a) ?(cutoff = ( == )) f =
     let equal = cutoff
   end in
   let visibility = Visibility.Hidden in
-  let f = Function.of_type Function.Type.Sync f in
+  let f = Function.sync f in
   let spec =
     Spec.create ~info:None
       ~input:(module Unit)
@@ -858,7 +879,7 @@ let lazy_async (type a) ?(cutoff = ( == )) f =
     let equal = cutoff
   end in
   let visibility = Visibility.Hidden in
-  let f = Function.of_type Function.Type.Async f in
+  let f = Function.async f in
   let spec =
     Spec.create ~info:None
       ~input:(module Unit)
@@ -956,6 +977,8 @@ module Poly = struct
         | Some Type_eq.T -> res )
   end
 
+  module Fun = Function
+
   module Sync (Function : sig
     include Function_interface
 
@@ -968,9 +991,9 @@ module Poly = struct
     let impl = function
       | K input -> V (id input, eval input)
 
-    let memo = create_hidden name ~input:(module Key) Sync impl
+    let memo = create_hidden name ~input:(module Key) (Fun.sync impl)
 
-    let eval x = get ~value:(exec memo (K x)) ~input_with_matching_id:x
+    let eval x = get ~value:(exec_sync memo (K x)) ~input_with_matching_id:x
   end
 
   module Async (Function : sig
@@ -985,10 +1008,10 @@ module Poly = struct
     let impl = function
       | K input -> Fiber.map (eval input) ~f:(fun v -> V (id input, v))
 
-    let memo = create_hidden name ~input:(module Key) Async impl
+    let memo = create_hidden name ~input:(module Key) (Fun.async impl)
 
     let eval x =
-      Fiber.map (exec memo (K x)) ~f:(fun value ->
+      Fiber.map (exec_async memo (K x)) ~f:(fun value ->
           get ~value ~input_with_matching_id:x)
   end
 end
