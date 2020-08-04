@@ -138,7 +138,7 @@ end = struct
     || String.is_suffix fn ~suffix:"~"
 
   let of_source_path path =
-    match Path.readdir_unsorted (Path.source path) with
+    match Path.readdir_unsorted_with_kinds (Path.source path) with
     | Error unix_error ->
       User_warning.emit
         [ Pp.textf "Unable to read directory %s. Ignoring."
@@ -155,15 +155,14 @@ end = struct
       Error unix_error
     | Ok unsorted_contents ->
       let files, dirs =
-        List.filter_partition_map unsorted_contents ~f:(fun fn ->
+        List.filter_partition_map unsorted_contents ~f:(fun (fn, kind) ->
             let path = Path.Source.relative path fn in
             if Path.Source.is_in_build_dir path then
               Skip
             else
               let is_directory, file =
-                match Path.stat (Path.source path) with
-                | exception _ -> (false, File.dummy)
-                | { st_kind = S_DIR; _ } as st -> (true, File.of_stats st)
+                match kind with
+                | S_DIR -> (true, File.of_source_path path)
                 | _ -> (false, File.dummy)
               in
               if is_directory then
