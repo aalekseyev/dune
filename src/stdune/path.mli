@@ -316,6 +316,8 @@ val link : t -> t -> unit
 
 val rm_rf : ?allow_external:bool -> t -> unit
 
+val clear : t -> unit
+
 val mkdir_p : ?perms:int -> t -> unit
 
 val touch : ?create:bool -> t -> unit

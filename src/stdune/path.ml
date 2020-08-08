@@ -1163,22 +1163,26 @@ let insert_after_build_dir_exn =
     | External _ ->
       error a b
 
-let rm_rf =
-  let rec loop dir =
-    Array.iter (Sys.readdir dir) ~f:(fun fn ->
-        let fn = Filename.concat dir fn in
-        match Unix.lstat fn with
-        | { st_kind = S_DIR; _ } -> loop fn
-        | _ -> unlink_operation fn);
-    Unix.rmdir dir
-  in
-  fun ?(allow_external = false) t ->
-    if (not allow_external) && not (is_managed t) then
-      Code_error.raise "Path.rm_rf called on external dir" [ ("t", to_dyn t) ];
-    let fn = to_string t in
-    match Unix.lstat fn with
-    | exception Unix.Unix_error (ENOENT, _, _) -> ()
-    | _ -> loop fn
+let rec clear dir =
+  Array.iter (Sys.readdir dir) ~f:(fun fn ->
+      let fn = Filename.concat dir fn in
+      match Unix.lstat fn with
+      | { st_kind = S_DIR; _ } -> rm_rf fn
+      | _ -> unlink_operation fn)
+
+and rm_rf path =
+  clear path;
+  Unix.rmdir path
+
+let rm_rf ?(allow_external = false) t =
+  if (not allow_external) && not (is_managed t) then
+    Code_error.raise "Path.rm_rf called on external dir" [ ("t", to_dyn t) ];
+  let fn = to_string t in
+  match Unix.lstat fn with
+  | exception Unix.Unix_error (ENOENT, _, _) -> ()
+  | _ -> rm_rf fn
+
+let clear dir = clear (to_string dir)
 
 let mkdir_p ?perms = function
   | External s -> External.mkdir_p s ?perms

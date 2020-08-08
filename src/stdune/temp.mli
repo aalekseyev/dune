@@ -8,6 +8,10 @@ type what =
   | Dir
   | File
 
+val temp_in_dir : what -> dir:Path.t -> prefix:string -> suffix:string -> Path.t
+
 val create : what -> prefix:string -> suffix:string -> Path.t
 
 val destroy : what -> Path.t -> unit
+
+val clear : Path.t -> unit
