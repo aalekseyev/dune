@@ -15,6 +15,10 @@ Unreleased
 - Fix `dune-package` installation when META templates are present (#3743, fixes
   #3746, @rgrinberg)
 
+- Move all temporary files created by dune to run actions to a single directory
+  and make sure that actions executed by dune also use this directory by
+  settting `TMPDIR` (or `TEMP` on Windows). (#3691, fixes #3422, @rgrinberg)
+
 2.7.0 (13/08/2020)
 ------------------
 
