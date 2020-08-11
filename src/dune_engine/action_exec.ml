@@ -121,25 +121,18 @@ module Temp : sig
 
   val destroy : Temp.what -> Path.t -> unit
 end = struct
-  let temp_dir =
-    lazy
-      (let path = Path.Build.relative Path.Build.root "temp" in
-       Path.mkdir_p (Path.build path);
-       path)
+  let temp_dir = lazy (Temp.create Dir ~prefix:"build" ~suffix:".dune")
 
   let file ~prefix ~suffix =
-    Temp.temp_in_dir File
-      ~dir:(Path.build (Lazy.force temp_dir))
-      ~suffix ~prefix
+    Temp.temp_in_dir File ~dir:(Lazy.force temp_dir) ~suffix ~prefix
 
   let env env =
-    let value = Path.to_absolute_filename (Path.build (Lazy.force temp_dir)) in
+    let value = Path.to_absolute_filename (Lazy.force temp_dir) in
     Env.add env ~var:Env.Var.temp_dir ~value
 
   let destroy = Temp.destroy
 
-  let clear () =
-    if Lazy.is_val temp_dir then Temp.clear (Path.build (Lazy.force temp_dir))
+  let clear () = if Lazy.is_val temp_dir then Temp.clear (Lazy.force temp_dir)
 
   let () = Hooks.End_of_build.always clear
 end
