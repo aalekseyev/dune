@@ -531,8 +531,9 @@ let run_internal ?dir ?(stdout_to = Io.stdout) ?(stderr_to = Io.stderr)
         let stdout = Io.fd stdout_to in
         let stderr = Io.fd stderr_to in
         let stdin = Io.fd stdin_from in
+        let env = Dtemp.add_to_env env in
         fun () ->
-          Spawn.spawn () ~prog:prog_str ~argv ?env ~stdout ~stderr ~stdin
+          Spawn.spawn () ~prog:prog_str ~argv ~env ~stdout ~stderr ~stdin
       in
       let pid =
         match dir with

@@ -111,36 +111,9 @@ let validate_context_and_prog context prog =
     invalid_prefix (Path.relative Path.build_dir target_name);
     invalid_prefix (Path.relative Path.build_dir ("install/" ^ target_name))
 
-module Temp : sig
-  (** Temp directory used for build actions: _build/temp *)
-
-  (** This returns a build path, but we don't rely on that *)
-  val file : prefix:string -> suffix:string -> Path.t
-
-  val env : Env.t -> Env.t
-
-  val destroy : Temp.what -> Path.t -> unit
-end = struct
-  let temp_dir = lazy (Temp.create Dir ~prefix:"build" ~suffix:".dune")
-
-  let file ~prefix ~suffix =
-    Temp.temp_in_dir File ~dir:(Lazy.force temp_dir) ~suffix ~prefix
-
-  let env env =
-    let value = Path.to_absolute_filename (Lazy.force temp_dir) in
-    Env.add env ~var:Env.Var.temp_dir ~value
-
-  let destroy = Temp.destroy
-
-  let clear () = if Lazy.is_val temp_dir then Temp.clear (Lazy.force temp_dir)
-
-  let () = Hooks.End_of_build.always clear
-end
-
 let exec_run ~ectx ~eenv prog args =
   validate_context_and_prog ectx.context prog;
-  let env = Temp.env eenv.env in
-  Process.run (Accept eenv.exit_codes) ~dir:eenv.working_dir ~env
+  Process.run (Accept eenv.exit_codes) ~dir:eenv.working_dir ~env:eenv.env
     ~stdout_to:eenv.stdout_to ~stderr_to:eenv.stderr_to
     ~stdin_from:eenv.stdin_from ~purpose:ectx.purpose prog args
   |> Fiber.map ~f:ignore
@@ -446,7 +419,7 @@ and exec_list ts ~ectx ~eenv =
 
 and exec_pipe outputs ts ~ectx ~eenv =
   let tmp_file () =
-    Temp.file ~prefix:"dune-pipe-action-"
+    Dtemp.file ~prefix:"dune-pipe-action-"
       ~suffix:("." ^ Action.Outputs.to_string outputs)
   in
   let multi_use_eenv =
@@ -460,7 +433,7 @@ and exec_pipe outputs ts ~ectx ~eenv =
     | [] -> assert false
     | [ last_t ] ->
       let+ result = redirect_in last_t ~ectx ~eenv Stdin in_ in
-      Temp.destroy File in_;
+      Dtemp.destroy File in_;
       result
     | t :: ts -> (
       let out = tmp_file () in
@@ -468,7 +441,7 @@ and exec_pipe outputs ts ~ectx ~eenv =
         redirect t ~ectx ~eenv:multi_use_eenv ~in_:(Stdin, in_)
           ~out:(outputs, out) ()
       in
-      Temp.destroy File in_;
+      Dtemp.destroy File in_;
       match done_or_deps with
       | Need_more_deps _ as need -> Fiber.return need
       | Done -> loop ~in_:out ts )
