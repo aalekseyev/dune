@@ -460,6 +460,7 @@ end
 
 let run_internal ?dir ?(stdout_to = Io.stdout) ?(stderr_to = Io.stderr)
     ?(stdin_from = Io.null In) ~env ~purpose fail_mode prog args =
+  Dtemp.init_env ();
   Scheduler.with_job_slot (fun () ->
       let display = (Config.t ()).display in
       let dir =
@@ -531,9 +532,9 @@ let run_internal ?dir ?(stdout_to = Io.stdout) ?(stderr_to = Io.stderr)
         let stdout = Io.fd stdout_to in
         let stderr = Io.fd stderr_to in
         let stdin = Io.fd stdin_from in
-        let env = Dtemp.add_to_env env in
+        let env = Option.map ~f:Dtemp.add_to_env env in
         fun () ->
-          Spawn.spawn () ~prog:prog_str ~argv ~env ~stdout ~stderr ~stdin
+          Spawn.spawn () ~prog:prog_str ~argv ?env ~stdout ~stderr ~stdin
       in
       let pid =
         match dir with
