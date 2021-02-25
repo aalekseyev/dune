@@ -58,6 +58,17 @@ module Make (Key : Key) : S with type key = Key.t = struct
 
   let fold t ~init ~f = foldi t ~init ~f:(fun _ x acc -> f x acc)
 
+  let fold_mapi t ~init ~f =
+    let acc = ref init in
+    let result =
+      mapi t ~f:(fun i x ->
+        let new_acc, y = f i !acc x in
+        acc := new_acc;
+        y)
+    in
+    !acc, result
+  ;;
+
   let for_alli t ~f = for_all t ~f
 
   let for_all t ~f = for_alli t ~f:(fun _ x -> f x)

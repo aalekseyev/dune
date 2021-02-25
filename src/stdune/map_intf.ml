@@ -49,6 +49,8 @@ module type S = sig
 
   val foldi : 'a t -> init:'b -> f:(key -> 'a -> 'b -> 'b) -> 'b
 
+  val fold_mapi : 'a t -> init:'b -> f:(key -> 'b -> 'a -> 'b * 'c) -> 'b * 'c t
+
   val for_all : 'a t -> f:('a -> bool) -> bool
 
   val for_alli : 'a t -> f:(key -> 'a -> bool) -> bool
