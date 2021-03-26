@@ -131,6 +131,8 @@ module type Local_gen = sig
 
   val reach : 'w t -> from:'w t -> string
 
+  val reach_canonical : 'w t -> from:'w t -> string
+
   val split_first_component : 'w t -> (string * Unspecified.w t) option
 
   module L : sig

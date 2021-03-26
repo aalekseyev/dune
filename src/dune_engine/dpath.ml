@@ -156,7 +156,7 @@ let decode =
 module Local = struct
   let encode ~dir:from p =
     let open Dune_lang.Encoder in
-    string (Path.reach ~from p)
+    string (Path.reach_canonical ~from p)
 
   let decode ~dir =
     let open Dune_lang.Decoder in
@@ -168,7 +168,7 @@ module Build = struct
   type t = Path.Build.t
 
   let encode p =
-    let str = Path.reach ~from:Path.build_dir (Path.build p) in
+    let str = Path.reach_canonical ~from:Path.build_dir (Path.build p) in
     Dune_lang.atom_or_quoted_string str
 
   let decode =

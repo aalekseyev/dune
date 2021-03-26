@@ -109,9 +109,9 @@ let for_shell t =
       let src =
         match Path.Build.parent dst with
         | None -> Path.to_string src
-        | Some from -> Path.reach ~from:(Path.build from) src
+        | Some from -> Path.reach_canonical ~from:(Path.build from) src
       in
-      let dst = Path.reach ~from:dir (Path.build dst) in
+      let dst = Path.reach_canonical ~from:dir (Path.build dst) in
       For_shell.Symlink (src, dst)
     | t ->
       Relativise.map_one_step loop t ~dir ~f_program ~f_string ~f_path ~f_target

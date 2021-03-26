@@ -125,7 +125,10 @@ let exec_run_dynamic_client ~ectx ~eenv prog args =
   let run_arguments =
     let targets =
       let to_relative path =
-        path |> Stdune.Path.build |> Stdune.Path.reach ~from:eenv.working_dir
+        (* We need a canonical representation of the path there because
+           Dune_action_plugin implementation, unfortunately, does a naive string
+           comparison when checking that a target is allowed. *)
+        path |> Stdune.Path.build |> Stdune.Path.reach_canonical ~from:eenv.working_dir
       in
       Stdune.Path.Build.Set.to_list ectx.targets
       |> String.Set.of_list_map ~f:to_relative
@@ -235,7 +238,7 @@ let rec exec t ~ectx ~eenv =
         | None -> Path.to_string src
         | Some from ->
           let from = Path.build from in
-          Path.reach ~from src
+          Path.reach_canonical ~from src
       in
       let dst = Path.Build.to_string dst in
       match Unix.readlink dst with

@@ -491,7 +491,7 @@ let run_internal ?dir ?(stdout_to = Io.stdout) ?(stderr_to = Io.stderr)
       in
       let id = gen_id () in
       let ok_codes = accepted_codes fail_mode in
-      let prog_str = Path.reach_for_running ?from:dir prog in
+      let prog_str = Path.reach ?from:dir prog in
       let command_line =
         command_line ~prog:prog_str ~args ~dir ~stdout_to ~stderr_to ~stdin_from
       in
@@ -635,7 +635,7 @@ let run_capture_line ?dir ?stderr_to ?stdin_from ?env ?(purpose = Internal_job)
       | [ x ] -> x
       | l -> (
         let cmdline =
-          let prog = Path.reach_for_running ?from:dir prog in
+          let prog = Path.reach ?from:dir prog in
           let prog_display = String.concat (prog :: args) ~sep:" " in
           match dir with
           | None -> prog_display

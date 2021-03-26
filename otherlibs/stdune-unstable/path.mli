@@ -210,6 +210,10 @@ val to_absolute_filename : t -> string
     Then [reach p ~from:d] evaluates to [../../dir/file]. *)
 val reach : t -> from:t -> string
 
+(** [reach_canonical] is similar to [reach], except it guarantees that the path is
+    normalized (has no "." components). *)
+val reach_canonical : t -> from:t -> string
+
 (** [from] defaults to [Path.root] *)
 val reach_for_running : ?from:t -> t -> string
 

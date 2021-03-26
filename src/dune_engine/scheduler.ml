@@ -739,7 +739,7 @@ module Rpc0 = struct
             Unix.symlink (Path.to_string socket)
               (let from = Path.external_ (Path.External.cwd ()) in
                Path.mkdir_p (Path.parent_exn symlink);
-               Path.reach_for_running ~from symlink);
+               Path.reach ~from symlink);
             let cleanup = Some { socket; symlink } in
             at_exit (fun () -> delete_cleanup cleanup);
             (ADDR_UNIX (Path.to_string socket), cleanup)

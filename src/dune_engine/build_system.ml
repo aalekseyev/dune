@@ -993,7 +993,9 @@ end = struct
             let to_ignore =
               Path.Build.Set.filter targets ~f:(fun target ->
                   Predicate_lang.Glob.exec pred
-                    (Path.reach (Path.build target) ~from:(Path.build dir))
+                    ((* TODO: it's confusing to do [reach_canonical] here if the path can
+                        only ever be a [basename]. *)
+                      Path.reach_canonical (Path.build target) ~from:(Path.build dir))
                     ~standard:Predicate_lang.any)
             in
             Path.Build.Set.union to_ignore acc_ignored

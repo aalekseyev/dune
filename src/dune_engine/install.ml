@@ -316,7 +316,7 @@ module Entry = struct
       |> Path.as_in_source_tree_exn |> Path.append_source prefix
     in
     let dst =
-      Path.reach i_want_to_install_the_file_as
+      Path.reach_canonical i_want_to_install_the_file_as
         ~from:opam_will_install_in_this_dir
     in
     { t with dst = Dst.explicit dst }

@@ -192,6 +192,8 @@ module Local_gen : sig
     val invalid : 'w t
   end
   with type 'w local := 'w t
+
+  val reach_gen : canonical:bool -> 'w t -> from:'w t -> string
 end = struct
   (* either "." for root, or a '/' separated list of components other that ".",
      ".." and not containing '/'. *)
@@ -379,16 +381,29 @@ end = struct
     let t_len = String.length t in
     t_len > of_len && t.[of_len] = '/' && String.is_prefix t ~prefix:of_
 
-  let reach t ~from =
+  let reach_gen ~canonical t ~from =
     let rec loop t from =
       match (t, from) with
       | a :: t, b :: from when a = b -> loop t from
-      | _ -> (
-        match List.fold_left from ~init:t ~f:(fun acc _ -> ".." :: acc) with
-        | [] -> "."
-        | l -> String.concat l ~sep:"/")
+      | _ ->
+        let components =
+          match canonical, from with
+          | false, [] ->
+            (* Make sure the path starts with a dot and contains a slash so that
+               programs are more likely to recognize it as a path instead of
+               handling it specially. For example, the [exec*] family of
+               functions does PATH lookup if there's no slashes, and various
+               unix tools have difficulty handling paths beginning with dashes. *)
+            "." :: t
+          | _ -> List.fold_left from ~init:t ~f:(fun acc _ -> ".." :: acc)
+        in
+        String.concat components ~sep:"/"
     in
     loop (to_list t) (to_list from)
+
+  let reach = reach_gen ~canonical:false
+
+  let reach_canonical = reach_gen ~canonical:true
 
   let extend_basename t ~suffix = make (to_string t ^ suffix)
 
@@ -488,8 +503,6 @@ module Local : sig
 
   val is_descendant : t -> of_:t -> bool
 
-  val reach : t -> from:t -> string
-
   module L : sig
     val relative : ?error_loc:Loc0.t -> t -> string list -> t
   end
@@ -499,6 +512,8 @@ module Local : sig
   val explode : t -> string list
 
   val of_local : t -> t
+
+  val reach_gen : canonical:bool -> t -> from:t -> string
 
   module Prefix : sig
     type local = t
@@ -866,25 +881,29 @@ let external_of_local x ~root =
 let external_of_in_source_tree x =
   external_of_local x ~root:(Lazy.force abs_root)
 
-let reach t ~from =
+let reach_gen ~canonical t ~from =
   match (t, from) with
   | External t, _ -> External.to_string t
   | In_source_tree t, In_source_tree from
   | In_build_dir t, In_build_dir from ->
-    Local.reach t ~from
+    Local.reach_gen ~canonical t ~from
   | In_source_tree t, In_build_dir from -> (
-    match Fdecl.get Build.build_dir with
-    | In_source_dir b -> Local.reach t ~from:(Local.append b from)
-    | External _ -> external_of_in_source_tree t)
+      match Fdecl.get Build.build_dir with
+      | In_source_dir b -> Local.reach_gen ~canonical t ~from:(Local.append b from)
+      | External _ -> external_of_in_source_tree t)
   | In_build_dir t, In_source_tree from -> (
-    match Fdecl.get Build.build_dir with
-    | In_source_dir b -> Local.reach (Local.append b t) ~from
-    | External b -> external_of_local t ~root:b)
+      match Fdecl.get Build.build_dir with
+      | In_source_dir b -> Local.reach_gen ~canonical (Local.append b t) ~from
+      | External b -> external_of_local t ~root:b)
   | In_source_tree t, External _ -> external_of_in_source_tree t
   | In_build_dir t, External _ -> (
-    match Fdecl.get Build.build_dir with
-    | In_source_dir b -> external_of_in_source_tree (Local.append b t)
-    | External b -> external_of_local t ~root:b)
+      match Fdecl.get Build.build_dir with
+      | In_source_dir b -> external_of_in_source_tree (Local.append b t)
+      | External b -> external_of_local t ~root:b)
+
+let reach = reach_gen ~canonical:false
+
+let reach_canonical = reach_gen ~canonical:true
 
 let reach_for_running ?(from = root) t =
   let fn = reach t ~from in
