@@ -177,6 +177,10 @@ module Stack_frame_without_state = struct
           | None -> "<unnamed>")
       ; input t
       ]
+
+  let human_readable_description (Dep_node_without_state.T t) =
+    Option.map t.spec.human_readable_description ~f:(fun f -> f t.input)
+
 end
 
 module Error = struct
@@ -208,11 +212,25 @@ end
 module Cycle_error = struct
   type t = Stack_frame_without_state.t list
 
-  exception E of t
-
-  let get t = t
-
-  let to_dyn = Dyn.Encoder.list Stack_frame_without_state.to_dyn
+  let make (cycle : t) : exn =
+    let human_readable_cycle =
+      List.filter_map ~f:Stack_frame_without_state.human_readable_description cycle
+    in
+    (match List.last human_readable_cycle with
+     | None ->
+       Code_error.E
+         (Code_error.create
+            "internal dependency cycle"
+            [ "frames", Dyn.Encoder.(list Stack_frame_without_state.to_dyn) cycle ])
+     | Some last ->
+       let cycle = human_readable_cycle in
+       let first = List.hd cycle in
+       let cycle = if last = first then cycle else last :: cycle in
+       User_error.E
+         ( User_error.make
+             [ Pp.text "Dependency cycle between:"; Pp.chain cycle ~f:(fun p -> p) ]
+         , [] ))
+  ;;
 end
 
 (* The user can wrap exceptions into the [Non_reproducible] constructor to tell
@@ -226,8 +244,6 @@ let () =
         let open Dyn.Encoder in
         match exn with
         | Error.E err -> Some (constr "Memo.Error.E" [ Error.to_dyn err ])
-        | Cycle_error.E frames ->
-          Some (constr "Cycle_error.E" [ Cycle_error.to_dyn frames ])
         | Non_reproducible exn ->
           Some (constr "Memo.Non_reproducible" [ Exn.to_dyn exn ])
         | _ -> None
@@ -295,7 +311,7 @@ module Value = struct
         (Exn_set.to_list_map exns ~f:(fun exn ->
              { exn with exn = Error.extend_stack exn.exn ~stack_frame }))
     | Cancelled { dependency_cycle } ->
-      raise (Error.extend_stack (Cycle_error.E dependency_cycle) ~stack_frame)
+      raise (Error.extend_stack (Cycle_error.make dependency_cycle) ~stack_frame)
 end
 
 module Dag : Dag.S with type value := Dep_node_without_state.packed =
@@ -850,8 +866,6 @@ module Stack_frame = struct
     | Some Type_eq.T -> Some t.input
     | None -> None
 
-  let human_readable_description (Dep_node_without_state.T t) =
-    Option.map t.spec.human_readable_description ~f:(fun f -> f t.input)
 end
 
 let create_with_cache (type i o) name ~cache ~input ~cutoff
@@ -1155,7 +1169,7 @@ end = struct
           let* res = res in
           Value.get_exn res.value ~stack_frame
         | Error cycle_error ->
-          raise (Error.extend_stack (Cycle_error.E cycle_error) ~stack_frame))
+          raise (Error.extend_stack (Cycle_error.make cycle_error) ~stack_frame))
 end
 
 let exec (type i o) (t : (i, o) t) i = Exec.exec_dep_node (dep_node t i)

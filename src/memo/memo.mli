@@ -149,15 +149,6 @@ module Error : sig
   val stack : t -> Stack_frame.t list
 end
 
-module Cycle_error : sig
-  type t
-
-  exception E of t
-
-  (** Get the list of stack frames in this cycle. *)
-  val get : t -> Stack_frame.t list
-end
-
 (* CR-someday amokhov: The current implementation memoizes all errors that are
    not wrapped into [Non_reproducible], which may be inconvenient in some cases,
    e.g. if a build action fails due to a spurious error, such as running out of
@@ -229,10 +220,7 @@ end
     behaviour, run Dune with the flag [DUNE_WATCHING_MODE_INCREMENTAL=true].
 
     If [human_readable_description] is passed, it will be used when displaying
-    the memo stack to the user.
-
-    Running the computation may raise [Memo.Cycle_error.E] if a dependency cycle
-    is detected. *)
+    the memo stack to the user. *)
 val create :
      string
   -> input:(module Input with type t = 'i)
